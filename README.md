@@ -8,12 +8,12 @@ RGB 웹캠(MediaPipe)을 이용한 16-DOF **Allegro Hand V4** 로봇 핸드 실�
 
 ```mermaid
 flowchart LR
-    A["Webcam (/dev/video0)"] -->|RGB Stream| B["vision_tracker.py<br/>(MediaPipe Hands)"]
-    B -->|"/allegro/vision/landmarks<br/>(Float32MultiArray, 51-dim)"| C["retargeting_node.py<br/>(Kinematics & Vector Math)"]
-    C -->|"/allegro/target_joints<br/>(Float64MultiArray, 16-dim)"| D["sim_bridge_node.py<br/>(EMA Low-Pass Filter)"]
-    D -->|"/allegro_hand_position_controller/commands<br/>(Float64MultiArray, 16-dim)"| E["ros2_control_node"]
-    E -->|Mock Components| F["RViz2 (3D Simulation)"]
-    E -->|Physical Device (can0, 1Mbps)| G["Allegro Hand V4 (Real HW)"]
+    A["Webcam (/dev/video0)"] -->|"RGB Stream"| B["vision_tracker.py<br/>(MediaPipe Hands)"]
+    B -->|"/allegro/vision/landmarks<br/>(51-dim Float32)"| C["retargeting_node.py<br/>(Kinematics & Vector Math)"]
+    C -->|"/allegro/target_joints<br/>(16-dim Float64)"| D["sim_bridge_node.py<br/>(EMA Low-Pass Filter)"]
+    D -->|"/allegro_hand_position_controller/commands<br/>(16-dim Float64)"| E["ros2_control_node"]
+    E -->|"Mock Components"| F["RViz2 (3D Simulation)"]
+    E -->|"Physical Device (can0, 1Mbps)"| G["Allegro Hand V4 (Real HW)"]
 ```
 
 ---
