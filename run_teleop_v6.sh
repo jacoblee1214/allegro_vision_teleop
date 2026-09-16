@@ -68,12 +68,23 @@ while [[ $# -gt 0 ]]; do
             DESCRIPTOR="$2"
             shift 2
             ;;
+        --ip)
+            USER_IP="$2"
+            if [[ "$USER_IP" =~ ^[0-9]+$ ]]; then
+                DESCRIPTOR="modbus_tcp:192.168.1.${USER_IP}:502"
+            elif [[ "$USER_IP" =~ ^[0-9.]+$ ]]; then
+                DESCRIPTOR="modbus_tcp:${USER_IP}:502"
+            else
+                DESCRIPTOR="$USER_IP"
+            fi
+            shift 2
+            ;;
         --no-gui|--headless)
             GUI_FLAG="--no-gui"
             shift
             ;;
         -h|--help)
-            echo "Usage: ./run_teleop.sh [nodes|sim|real] [--rate 60|100] [--alpha 0.20] [--device 8] [--scale 1.75] [--fps 60] [--descriptor <desc>] [--no-gui]"
+            echo "Usage: ./run_teleop.sh [nodes|sim|real] [--ip <ip|end_num>] [--rate 60|100] [--alpha 0.20] [--device 8] [--scale 1.75] [--fps 60] [--descriptor <desc>] [--no-gui]"
             echo ""
             echo "Modes:"
             echo "  nodes (default) : Launch vision_tracker, retargeting_node, sim_bridge_node"
@@ -81,6 +92,7 @@ while [[ $# -gt 0 ]]; do
             echo "  real            : Launch Allegro Hand V6 physical hardware (Modbus TCP/RTU) + 3 teleop nodes"
             echo ""
             echo "Options:"
+            echo "  --ip <str>           : Target robot IP (e.g. 192.168.1.101, 101, or 192.168.1.100)"
             echo "  --rate, --hz <int>   : Command publishing frequency to robot (default: 100 Hz, e.g. 60 or 100 for tremor suppression)"
             echo "  --fps <int>          : Camera capture frame rate (default: 60 FPS)"
             echo "  --alpha <float>      : EMA smoothing factor (default: 0.25, range: 0.05~0.5)"
@@ -198,6 +210,15 @@ case "$MODE" in
         ;;
     real)
         echo "[1/4] Checking Allegro Hand V6 hardware connection ($DESCRIPTOR)..."
+        # Auto-configure host Ethernet interface if needed
+        for iface in enp129s0 eth0; do
+            if [ -d "/sys/class/net/$iface" ]; then
+                ip addr add 192.168.1.10/24 dev "$iface" 2>/dev/null || true
+                ip addr add 192.168.40.10/24 dev "$iface" 2>/dev/null || true
+                ip link set "$iface" up 2>/dev/null || true
+            fi
+        done
+
         if [[ "$DESCRIPTOR" =~ modbus_tcp:([0-9.]+):([0-9]+) ]]; then
             TARGET_IP="${BASH_REMATCH[1]}"
             if ! ping -c 1 -W 1 "$TARGET_IP" >/dev/null 2>&1; then
