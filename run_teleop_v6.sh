@@ -28,6 +28,37 @@
 
 set -e
 
+# ------------------------------------------------------------------------------
+# Auto-delegation: If executed directly on the host machine, run inside Docker
+# ------------------------------------------------------------------------------
+if [ ! -f "/.dockerenv" ] && [ "${RUN_ON_HOST:-0}" != "1" ]; then
+    echo "========================================================"
+    echo "[*] Host machine detected: $(hostname)"
+    echo "[*] Connecting to Docker container 'ros_humble_dev'..."
+
+    # 1. Allow container access to local X11 display
+    xhost +local:docker >/dev/null 2>&1 || true
+
+    # 2. Check if container is running; start if stopped
+    if ! docker ps --format '{{.Names}}' | grep -q "^ros_humble_dev$"; then
+        echo "[*] Starting ros_humble_dev container..."
+        docker start ros_humble_dev >/dev/null
+    fi
+
+    # 3. Interactive TTY flags
+    DOCKER_FLAGS="-i"
+    if [ -t 0 ] && [ -t 1 ]; then
+        DOCKER_FLAGS="-it"
+    fi
+
+    echo "[*] Executing inside ros_humble_dev (with GUI forwarding)..."
+    echo "========================================================"
+
+    exec docker exec $DOCKER_FLAGS \
+        -e DISPLAY="${DISPLAY:-:1}" \
+        ros_humble_dev /home/humble_ws/allegro_vision_teleop/run_teleop_v6.sh "$@"
+fi
+
 MODE="nodes"
 ALPHA="0.25"
 DEVICE=""
@@ -36,6 +67,10 @@ DESCRIPTOR="modbus_tcp:192.168.1.100:502"
 SCALE="1.75"
 RATE="100"
 FPS="60"
+RECORD_FLAG=false
+USE_DASHBOARD=true
+HAND_SIDE="left"  # Default to 'left' since connected hardware is Left Hand (P6LA0020)
+USER_SPECIFIED_HAND=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -43,6 +78,11 @@ while [[ $# -gt 0 ]]; do
         nodes|sim|real)
             MODE="$1"
             shift
+            ;;
+        --hand)
+            HAND_SIDE="$2"
+            USER_SPECIFIED_HAND=true
+            shift 2
             ;;
         --alpha)
             ALPHA="$2"
@@ -83,8 +123,20 @@ while [[ $# -gt 0 ]]; do
             GUI_FLAG="--no-gui"
             shift
             ;;
+        --record)
+            RECORD_FLAG=true
+            shift
+            ;;
+        --simple-gui)
+            USE_DASHBOARD=false
+            shift
+            ;;
+        --dashboard|--ui)
+            USE_DASHBOARD=true
+            shift
+            ;;
         -h|--help)
-            echo "Usage: ./run_teleop.sh [nodes|sim|real] [--ip <ip|end_num>] [--rate 60|100] [--alpha 0.20] [--device 8] [--scale 1.75] [--fps 60] [--descriptor <desc>] [--no-gui]"
+            echo "Usage: ./run_teleop.sh [nodes|sim|real] [--hand left|right] [--ip <ip|end_num>] [--rate 60|100] [--alpha 0.20] [--device 8] [--scale 1.75] [--fps 60] [--descriptor <desc>] [--no-gui]"
             echo ""
             echo "Modes:"
             echo "  nodes (default) : Launch vision_tracker, retargeting_node, sim_bridge_node"
@@ -92,6 +144,7 @@ while [[ $# -gt 0 ]]; do
             echo "  real            : Launch Allegro Hand V6 physical hardware (Modbus TCP/RTU) + 3 teleop nodes"
             echo ""
             echo "Options:"
+            echo "  --hand <left|right>  : Hand side model (default: auto-detected from hardware register 0x0071, or 'left')"
             echo "  --ip <str>           : Target robot IP (e.g. 192.168.1.101, 101, or 192.168.1.100)"
             echo "  --rate, --hz <int>   : Command publishing frequency to robot (default: 100 Hz, e.g. 60 or 100 for tremor suppression)"
             echo "  --fps <int>          : Camera capture frame rate (default: 60 FPS)"
@@ -99,6 +152,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --device <int>       : Camera device index (default: auto-detect Intel RealSense RGB -> /dev/video8, or fallback to 0)"
             echo "  --scale <float>      : Camera GUI display scale (default: 1.75 -> 1120x840, resizable)"
             echo "  --descriptor <str>   : Hardware descriptor (default: modbus_tcp:192.168.1.100:502)"
+            echo "  --record             : Launch VLA dataset recorder node (auto-records episodes on 'R' and tags on 'S')"
             echo "  --no-gui             : Disable OpenCV debug window"
             exit 0
             ;;
@@ -203,8 +257,8 @@ trap cleanup SIGINT SIGTERM EXIT
 
 case "$MODE" in
     sim)
-        echo "[1/4] Launching Allegro Hand V6 Mock Hardware & RViz2..."
-        ros2 launch allegro_hand_v6_bringup allegro_hand.launch.py ros2_control_hardware_type:=mock_components &
+        echo "[1/4] Launching Allegro Hand V6 ($HAND_SIDE hand) Mock Hardware & RViz2..."
+        ros2 launch allegro_hand_v6_bringup allegro_hand.launch.py ros2_control_hardware_type:=mock_components hand:="$HAND_SIDE" &
         PIDS+=($!)
         sleep 3
         ;;
@@ -233,10 +287,37 @@ case "$MODE" in
                 echo "--------------------------------------------------------"
             else
                 echo "[✓] Allegro Hand V6 at $TARGET_IP is reachable!"
+                # Auto-detect Hand Type (Left vs Right) from Modbus Register 0x0071 if not manually specified
+                if [ "$USER_SPECIFIED_HAND" = false ]; then
+                    AUTO_HAND=$(python3 -c "
+import socket
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(0.6)
+    s.connect(('$TARGET_IP', int('${BASH_REMATCH[2]}')))
+    # Modbus TCP Read Holding Register 0x0071 (count: 1)
+    s.sendall(b'\x00\x01\x00\x00\x00\x06\x01\x03\x00\x71\x00\x01')
+    res = s.recv(32)
+    s.close()
+    if len(res) >= 11 and res[7] == 3:
+        val = int.from_bytes(res[9:11], 'big')
+        print('right' if val == 1 else 'left')
+except Exception:
+    pass
+" 2>/dev/null || true)
+                    if [ -n "$AUTO_HAND" ]; then
+                        HAND_SIDE="$AUTO_HAND"
+                        echo "[✓] Hardware auto-detected hand type: $HAND_SIDE hand (Modbus register 0x0071)"
+                    else
+                        echo "[*] Using default hand type: $HAND_SIDE hand"
+                    fi
+                else
+                    echo "[*] Hand type specified by user: $HAND_SIDE hand"
+                fi
             fi
         fi
-        echo "[1/4] Launching Physical Allegro Hand V6 Hardware Interface ($DESCRIPTOR)..."
-        ros2 launch allegro_hand_v6_bringup allegro_hand.launch.py ros2_control_hardware_type:=hardware io_interface_descriptor:="$DESCRIPTOR" &
+        echo "[1/4] Launching Physical Allegro Hand V6 Hardware Interface ($DESCRIPTOR, hand:=$HAND_SIDE)..."
+        ros2 launch allegro_hand_v6_bringup allegro_hand.launch.py ros2_control_hardware_type:=hardware io_interface_descriptor:="$DESCRIPTOR" hand:="$HAND_SIDE" &
         PIDS+=($!)
         sleep 3
         ;;
@@ -245,8 +326,8 @@ case "$MODE" in
         ;;
 esac
 
-echo "[+] Starting Kinematic Retargeting Node (V6)..."
-python3 "$SCRIPT_DIR/retargeting_node_v6.py" --quiet &
+echo "[+] Starting Kinematic Retargeting Node (V6, hand: $HAND_SIDE)..."
+python3 "$SCRIPT_DIR/retargeting_node_v6.py" --quiet --hand "$HAND_SIDE" &
 PIDS+=($!)
 sleep 0.5
 
@@ -255,9 +336,22 @@ python3 "$SCRIPT_DIR/sim_bridge_node_v6.py" --rate "$RATE" --alpha "$ALPHA" &
 PIDS+=($!)
 sleep 0.5
 
-echo "[+] Starting MediaPipe Vision Tracker Node (V6, $CAM_DESC, ${SCALE}x scale, ${FPS} FPS)..."
-python3 "$SCRIPT_DIR/vision_tracker_v6.py" --device "$DEVICE" --scale "$SCALE" --fps "$FPS" $GUI_FLAG &
-PIDS+=($!)
+if [ "$USE_DASHBOARD" = true ] && [ -z "$GUI_FLAG" ]; then
+    echo "[+] Starting Unified Teleoperation Cockpit Dashboard (V6, PyQt5 @ ${FPS} FPS, hand: $HAND_SIDE)..."
+    python3 "$SCRIPT_DIR/teleop_dashboard_v6.py" --device "$DEVICE" --fps "$FPS" --hand "$HAND_SIDE" &
+    PIDS+=($!)
+else
+    echo "[+] Starting MediaPipe Vision Tracker Node (V6, $CAM_DESC, ${SCALE}x scale, ${FPS} FPS)..."
+    python3 "$SCRIPT_DIR/vision_tracker_v6.py" --device "$DEVICE" --scale "$SCALE" --fps "$FPS" $GUI_FLAG &
+    PIDS+=($!)
+fi
+
+if [ "$RECORD_FLAG" = true ]; then
+    sleep 0.5
+    echo "[+] Starting VLA Dataset Recorder Node (V6, 20-DOF @ ${RATE}Hz)..."
+    python3 "$SCRIPT_DIR/dataset_recorder.py" --sample-hz "$RATE" --dof 20 &
+    PIDS+=($!)
+fi
 
 echo "========================================================"
 echo " All nodes running! Press Ctrl+C in this terminal to exit."

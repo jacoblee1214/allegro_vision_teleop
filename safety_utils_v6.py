@@ -25,11 +25,13 @@ N_JOINTS: int = 20
 # ─── Joint limits (rad) ────────────────────────────────────────────────────────
 # Allegro Hand V6 limits (exact URDF-verified from allegro_hand_v6_right.urdf)
 JOINT_LIMITS: dict[str, tuple[float, float]] = {
-    # Thumb (joint00~03): joint00=abduction/opposition, joint01=elevation/inward swing, joint02/03=flexion
-    "joint00": (-0.035,  1.658),
+    # Thumb (joint00~03): Supports both Left and Right Hand kinematic ranges
+    # Left Hand: J00 is negative opposition (-1.40~0), J01 is elevation (-0.2~1.4), J02/J03 are negative flexion (-1.4~0.2)
+    # Right Hand: J00 is positive opposition (0~1.40), J01 is elevation (-1.4~1.4), J02/J03 are positive flexion (-0.2~1.4)
+    "joint00": (-1.658,  1.658),
     "joint01": (-1.658,  1.658),
-    "joint02": (-0.175,  1.309),
-    "joint03": (-0.175,  1.396),
+    "joint02": (-1.400,  1.400),
+    "joint03": (-1.400,  1.400),
     # Index (joint10~13): joint10=abduction, joint11=MCP flexion, joint12=PIP, joint13=DIP
     "joint10": (-0.384,  1.309),
     "joint11": (-0.070,  1.571),
