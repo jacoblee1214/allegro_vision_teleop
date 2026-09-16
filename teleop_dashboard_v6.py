@@ -191,6 +191,7 @@ def find_best_camera_device() -> tuple[int, str]:
 def get_urdf_content(hand_side: str) -> str:
     """Finds and reads the Allegro Hand V6 URDF for the specified hand side."""
     candidates = [
+        Path(__file__).resolve().parent / "urdf" / f"allegro_hand_v6_{hand_side}.urdf",
         Path(f"/home/humble_ws/src/allegro_hand_v6/allegro_hand_v6_description/urdf/allegro_hand_v6_{hand_side}.urdf"),
         Path(f"/home/jake/humble_ws/src/allegro_hand_v6/allegro_hand_v6_description/urdf/allegro_hand_v6_{hand_side}.urdf"),
         Path(f"/home/humble_ws/install/allegro_hand_v6_description/share/allegro_hand_v6_description/urdf/allegro_hand_v6_{hand_side}.urdf"),
