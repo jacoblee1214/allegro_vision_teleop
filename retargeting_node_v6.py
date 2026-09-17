@@ -63,6 +63,35 @@ QOS_PROFILE = QoSProfile(
     depth=10,
 )
 
+# ─── Left Hand Thumb Kinematic Calibration Parameters ─────────────────────────
+# Direct numerical control over thumb joint signs (+1.0 or -1.0), gains, and ranges:
+LEFT_THUMB_CALIB = {
+    # joint00: Base Opposition (across palm towards index)
+    # -1.0: Rotates inward across palm | +1.0: Rotates outward
+    "j00_sign": -1.0,
+    "j00_min": 0.05,            # Open flat (rad)
+    "j00_max": 1.40,            # Max opposition (rad)
+    "j00_pinch": 1.25,          # Target during pinch (rad)
+
+    # joint01: Elevation / Swing (upward along index vs downward)
+    # -1.0: Rotates UPWARD along index | +1.0: Rotates DOWNWARD
+    "j01_sign": -1.0,
+    "j01_flat": 0.10,           # Open flat resting angle (rad)
+    "j01_elev_max": 0.75,       # Max upward elevation (rad)
+    "j01_pinch": 0.55,          # Target during pinch (rad)
+    "j01_fist": 0.35,           # Target during fist (rad)
+
+    # joint02: MCP Flexion (forward curl)
+    "j02_sign": 1.0,
+    "j02_scale": 1.50,          # Sensitivity gain for human thumb MCP bend
+    "j02_pinch": 0.50,
+
+    # joint03: IP Curl (tip curl)
+    "j03_sign": 1.0,
+    "j03_scale": 2.10,          # Sensitivity gain for human thumb tip curl
+    "j03_pinch": 0.70,
+}
+
 
 def angle_between(v1: np.ndarray, v2: np.ndarray) -> float:
     """Calculate angle in radians between two 3D vectors v1 and v2."""
@@ -300,10 +329,11 @@ class KinematicRetargetingNode(Node):
             q03 = max(q03, fist_w * 1.00)
 
         if self.hand_side == "left":
-            q00_out = float(q00)       # Base opposition rotates across palm towards index (+0.05 ~ +1.45 rad)
-            q01_out = float(q01_left)  # Second joint upward elevation & forward swing (+0.10 ~ +0.75 rad)
-            q02_out = float(q02)       # MCP flexion curls forward (+0.0 ~ +1.20 rad)
-            q03_out = float(q03)       # IP tip curl curls forward (+0.0 ~ +1.30 rad)
+            c = LEFT_THUMB_CALIB
+            q00_out = c["j00_sign"] * float(q00)
+            q01_out = c["j01_sign"] * float(q01_left)
+            q02_out = c["j02_sign"] * float(q02)
+            q03_out = c["j03_sign"] * float(q03)
         else:
             q00_out = float(q00)
             q01_out = float(q01_right)
