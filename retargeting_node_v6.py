@@ -76,10 +76,10 @@ LEFT_THUMB_CALIB = {
     # joint01: Elevation / Swing (upward along index vs downward)
     # -1.0: Rotates UPWARD along index | +1.0: Rotates DOWNWARD
     "j01_sign": -1.0,
-    "j01_flat": 0.10,           # Open flat resting angle (rad)
-    "j01_elev_max": 0.75,       # Max upward elevation (rad)
-    "j01_pinch": 0.55,          # Target during pinch (rad)
-    "j01_fist": 0.35,           # Target during fist (rad)
+    "j01_flat": 0.20,           # Open flat resting angle (rad)
+    "j01_elev_max": 1.25,       # Max upward elevation (rad, ~72 deg)
+    "j01_pinch": 0.75,          # Target during pinch (rad, ~43 deg)
+    "j01_fist": 0.45,           # Target during fist (rad)
 
     # joint02: MCP Flexion (forward curl)
     "j02_sign": 1.0,
@@ -214,12 +214,12 @@ class KinematicRetargetingNode(Node):
             q0 = 0.0
         else:
             q0 = signed_abduction_angle(v_prox, palm_forward, palm_normal)
-            if prefix in ("joint1", "ah_joint1"):
-                q0 = q0 * 1.45
-            elif prefix in ("joint3", "ah_joint3"):
-                q0 = q0 * 1.45
-            elif prefix in ("joint4", "ah_joint4"):
-                q0 = q0 * 1.45
+            abduction_gain = 1.45
+            if self.hand_side == "left":
+                # Invert for Left Hand so human finger spreading spreads robot fingers outward (away from middle)
+                q0 = -q0 * abduction_gain
+            else:
+                q0 = q0 * abduction_gain
 
         # Joint 1: MCP Flexion
         q1 = angle_between(v_meta, v_prox)
@@ -287,14 +287,16 @@ class KinematicRetargetingNode(Node):
         q00 = float(np.interp(opp_angle, [-0.25, 1.10], [0.05, 1.40]))
 
         # 2. Base Elevation / Upward Swing (joint01):
-        # proj_fwd: measures thumb pointing UPWARD along index/middle fingers
+        # 2. Base Elevation / Upward Swing (joint01):
+        # proj_fwd: measures thumb pointing UPWARD along index/middle fingers (range 0.05 ~ 0.85)
         proj_fwd = float(np.dot(u_thumb_ray, u_fwd))
-        elev_up = float(np.clip((proj_fwd - 0.20) / 0.55, 0.0, 1.0))
+        # Highly sensitive upward elevation detector
+        elev_up = float(np.clip((proj_fwd - 0.05) / 0.45, 0.0, 1.0))
 
         # Right hand: upward is positive (+0.12 ~ +0.50), flexion is negative (-0.10 ~ -0.75)
-        q01_right = float(np.interp(proj_norm, [-0.15, 0.40], [0.12 + elev_up * 0.38, -0.75]))
-        # Left hand (axis [0, 0, -1]): upward elevation is POSITIVE (+0.10 ~ +0.75 rad)
-        q01_left = float(np.interp(proj_norm, [-0.15, 0.40], [0.10 + elev_up * 0.65, 0.60]))
+        q01_right = float(np.interp(proj_norm, [-0.15, 0.40], [0.12 + elev_up * 0.45, -0.75]))
+        # Left hand: upward elevation strongly reaches up to +1.25 rad (~72 deg)
+        q01_left = float(np.interp(proj_norm, [-0.15, 0.40], [0.20 + elev_up * 1.05, 0.70 + elev_up * 0.45]))
 
         # 3. Flexion angles (joint02, joint03) with tuned scales from v6_tuning & v6_adaptive
         q02_bone = angle_between(v_thumb_prox, v_thumb_mid)
@@ -313,7 +315,7 @@ class KinematicRetargetingNode(Node):
         if pinch_factor > 0:
             q00 = (1.0 - pinch_factor * 0.70) * q00 + (pinch_factor * 0.70) * 1.25
             q01_right = (1.0 - pinch_factor * 0.70) * q01_right + (pinch_factor * 0.70) * (-0.55)
-            q01_left = (1.0 - pinch_factor * 0.70) * q01_left + (pinch_factor * 0.70) * 0.55
+            q01_left = (1.0 - pinch_factor * 0.70) * q01_left + (pinch_factor * 0.70) * 0.75
             q02 = max(q02, pinch_factor * 0.50)
             q03 = max(q03, pinch_factor * 0.70)
 
@@ -324,7 +326,7 @@ class KinematicRetargetingNode(Node):
             fist_w = float(np.clip((fingers_flexion - 0.90) / 0.35, 0.0, 1.0) * np.clip((0.45 - d_palm) / 0.15, 0.0, 1.0))
             q00 = (1.0 - fist_w) * q00 + fist_w * 1.45
             q01_right = (1.0 - fist_w) * q01_right + fist_w * (-1.15)
-            q01_left = (1.0 - fist_w) * q01_left + fist_w * 0.35
+            q01_left = (1.0 - fist_w) * q01_left + fist_w * 0.45
             q02 = max(q02, fist_w * 0.80)
             q03 = max(q03, fist_w * 1.00)
 
