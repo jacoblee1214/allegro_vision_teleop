@@ -60,24 +60,24 @@ JOINT_LIMITS_LEFT: dict[str, tuple[float, float]] = {
     "joint01": (-1.658,  1.658),
     "joint02": (-0.175,  1.400),
     "joint03": (-0.175,  1.400),
-    # Index (joint10~13): negative spreads outward
+    # Index (joint10~13): negative spreads outward, joint11 allows -90 deg (-1.571 rad) motor offset
     "joint10": (-1.309,  0.384),
-    "joint11": (-0.070,  1.571),
+    "joint11": (-1.658,  1.571),
     "joint12": (-0.175,  1.396),
     "joint13": (-0.175,  1.396),
     # Middle (joint20~23)
     "joint20": (-1.135,  1.135),
-    "joint21": (-0.070,  1.571),
+    "joint21": (-1.658,  1.571),
     "joint22": (-0.175,  1.396),
     "joint23": (-0.175,  1.396),
     # Ring (joint30~33): positive spreads outward
     "joint30": (-0.384,  1.309),
-    "joint31": (-0.070,  1.571),
+    "joint31": (-1.658,  1.571),
     "joint32": (-0.175,  1.396),
     "joint33": (-0.175,  1.396),
     # Pinky (joint40~43): positive spreads outward
     "joint40": (-0.436,  1.309),
-    "joint41": (-0.070,  1.571),
+    "joint41": (-1.658,  1.571),
     "joint42": (-0.175,  1.396),
     "joint43": (-0.175,  1.396),
 }

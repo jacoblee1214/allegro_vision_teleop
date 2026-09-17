@@ -165,6 +165,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+if [ ! -f "$SCRIPT_DIR/retargeting_node_v6.py" ]; then
+    if [ -f "/home/humble_ws/allegro_vision_teleop/retargeting_node_v6.py" ]; then
+        SCRIPT_DIR="/home/humble_ws/allegro_vision_teleop"
+    elif [ -f "/home/jake/humble_ws/allegro_vision_teleop/retargeting_node_v6.py" ]; then
+        SCRIPT_DIR="/home/jake/humble_ws/allegro_vision_teleop"
+    fi
+fi
 
 # Ensure ROS 2 environment is sourced
 if [ -f "/opt/ros/humble/setup.bash" ]; then
@@ -290,10 +297,11 @@ case "$MODE" in
                 # Auto-detect Hand Type (Left vs Right) from Modbus Register 0x0071 if not manually specified
                 if [ "$USER_SPECIFIED_HAND" = false ]; then
                     AUTO_HAND=$(python3 -c "
-import socket
+import socket, struct
 try:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(0.6)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
     s.connect(('$TARGET_IP', int('${BASH_REMATCH[2]}')))
     # Modbus TCP Read Holding Register 0x0071 (count: 1)
     s.sendall(b'\x00\x01\x00\x00\x00\x06\x01\x03\x00\x71\x00\x01')
@@ -314,6 +322,8 @@ except Exception:
                 else
                     echo "[*] Hand type specified by user: $HAND_SIDE hand"
                 fi
+                # Allow MCU TCP stack 0.4s to be cleanly ready for ros2_control connection
+                sleep 0.4
             fi
         fi
         echo "[1/4] Launching Physical Allegro Hand V6 Hardware Interface ($DESCRIPTOR, hand:=$HAND_SIDE)..."
