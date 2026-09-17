@@ -212,25 +212,57 @@ docker exec -it ros_humble_dev bash -c "
 
 ## 🚀 실행 가이드 (Quick Start)
 
-어디서든 간편하게 실행할 수 있도록 단축 런처가 홈 디렉토리에 등록되어 있습니다.
+어디서든 간편하게 실행할 수 있도록 올인원 단축 런처가 홈 디렉토리 및 시스템 명령어(`run_v6`)로 등록되어 있습니다.
 
-### 1. Allegro Hand V6 (5-Finger) 실행
+> [!TIP]
+> ### ⚡ 초간단 3초 실행 (가장 추천하는 명령어)
+>
+> **1. 실제 로봇 손 원격 제어 (Real Robot Teleoperation)**
+> ```bash
+> # 호스트 터미널에서 실행 시
+> ~/run_v6.sh real --rate 100 --scale 2.0 --alpha 0.18
+>
+> # 또는 도커 컨테이너 내부 명령어로 실행 시 (완전히 동일)
+> docker exec -it -e DISPLAY=$DISPLAY ros_humble_dev run_v6 real --rate 100 --scale 2.0 --alpha 0.18
+> ```
+>
+> **2. 가상 3D 시뮬레이션 (로봇 없이 웹캠/RealSense만으로 테스트)**
+> ```bash
+> ~/run_v6.sh sim
+> ```
+
+---
+
+### 🎮 텔레옵 대시보드 단축키 안내 (Keyboard Shortcuts)
+프로그램 실행 후 카메라/대시보드 창이 활성화된 상태에서 아래 키를 누르면 즉시 기능이 동작합니다:
+
+| 단축키 | 기능 명칭 | 상세 설명 |
+|---|---|---|
+| **`H`** | **손 모드 전환 (Hand Switch)** | **왼손(LEFT) ↔ 오른손(RIGHT)** 기구학 파이프라인 및 RViz 3D 모델 실시간 즉각 전환 |
+| **`Space`** | **클러치 홀드 (Clutch Hold)** | 작업자가 손을 화면 밖으로 치우거나 쉴 때, **로봇 관절을 현재 위치에 안전하게 고정(Freeze)** |
+| **`R`** | **에피소드 녹화 (Record)** | VLA 로봇 학습용 20-DOF 관절 데이터셋 녹화 시작 및 저장 종료 (`--record` 옵션 시) |
+| **`S`** | **성공 태깅 (Success Tag)** | 조작 태스크 성공 시점에 데이터셋 플래그 태깅 |
+| **`Ctrl + C`** | **안전 일괄 종료 (Exit)** | 모든 백그라운드 노드, 카메라 스트림, 로봇 통신을 안전하고 깨끗하게 자동 정리 |
+
+---
+
+### 1. Allegro Hand V6 (5-Finger) 실행 상세
 
 #### ① 실제 하드웨어 로봇 제어 (Real Robot Teleoperation - 실전용)
 ```bash
 ~/run_v6.sh real
 ```
-- **자동 동작**:
-  1. 호스트 실행 감지 시 `ros_humble_dev` 컨테이너 자동 연결 및 GUI 포워딩.
-  2. `192.168.1.100` 핑 사전 점검.
+- **완전 자동화 시퀀스**:
+  1. 호스트 실행 감지 시 `ros_humble_dev` 컨테이너 자동 연결 및 X11 GUI 포워딩.
+  2. `192.168.1.100` 네트워크 핑 사전 점검.
   3. Modbus `0x0071` 레지스터 조회를 통한 왼손/오른손 자동 판별.
-  4. Intel RealSense RGB 카메라(`/dev/video8`) 자동 검색 및 60 FPS 연동.
-  5. 100Hz 고주파 지터 억제 루프와 함께 PyQt5 콕핏 대시보드 구동.
+  4. Intel RealSense RGB 카메라(`/dev/video8` 등) 자동 검색 및 60 FPS 연동 (없을 시 웹캠 `/dev/video0` 자동 폴백).
+  5. 100Hz 고주파 지터 억제 루프와 함께 PyQt5 콕핏 대시보드 및 RViz2 3D 뷰어 동시 구동.
 
 > **특정 손 강제 지정 실행 시**:
 > ```bash
-> ~/run_v6.sh real --hand left   # 왼손 강제
-> ~/run_v6.sh real --hand right  # 오른손 강제
+> ~/run_v6.sh real --hand left   # 왼손 강제 구동
+> ~/run_v6.sh real --hand right  # 오른손 강제 구동
 > ```
 
 #### ② 가상 3D 시뮬레이션 (RViz2 Simulation - 로봇 없이 테스트)
@@ -244,7 +276,6 @@ docker exec -it ros_humble_dev bash -c "
 ~/run_v6.sh real --record
 ```
 - 카메라 영상, 21개 3D 랜드마크, 20-DOF 관절 지령/현재 위치를 HDF5/NPZ 포맷으로 동기화 기록합니다.
-- 조작 키: `R` (에피소드 녹화 시작/정지), `S` (태스크 완료 플래그 태깅), `Space` (클러치 홀드).
 
 ---
 
@@ -261,17 +292,17 @@ docker exec -it ros_humble_dev bash -c "
 
 ## ⚙️ CLI 실행 옵션 상세 (Command-line Options)
 
-`run_v6.sh [mode] [options]`에서 지원하는 유용한 파라미터입니다:
+`run_v6.sh [mode] [options]`에서 지원하는 파라미터 목록입니다:
 
-| 옵션 | 설명 | 기본값 | 사용 예시 |
+| 옵션 | 설명 | 기본값 | 추천 예시 |
 |---|---|---|---|
 | `real` / `sim` / `nodes` | 실행 모드 (물리 하드웨어 / RViz2 시뮬 / 비전 노드 단독) | `nodes` | `~/run_v6.sh real` |
 | `--hand <left\|right>` | 로봇 손 모델 명시 (미지정 시 하드웨어 자동 감지) | `auto` (0x0071) | `--hand left` |
 | `--rate <int>`, `--hz <int>` | 로봇 명령 송출 주기 (Hz) (100Hz 고주파 보간) | `100` | `--rate 100` |
-| `--alpha <float>` | EMA 저주파 필터 계수 (작을수록 부드러움, 권장: 0.18~0.25) | `0.25` | `--alpha 0.20` |
-| `--scale <float>` | 카메라 GUI 화면 배율 (마우스로 창 크기 조절도 가능) | `1.75` | `--scale 2.0` |
+| `--alpha <float>` | EMA 저주파 필터 계수 (작을수록 부드러움, 권장: 0.18~0.25) | `0.25` | `--alpha 0.18` |
+| `--scale <float>` | 카메라 GUI 화면 배율 (마우스 드래그로도 조절 가능) | `1.75` | `--scale 2.0` |
 | `--fps <int>` | 카메라 캡처 목표 프레임레이트 | `60` | `--fps 60` |
-| `--device <int>` | 카메라 디바이스 인덱스 (RealSense 없을 시 0으로 폴백) | `auto` | `--device 8` 또는 `--device 0` |
+| `--device <int>` | 카메라 디바이스 인덱스 (RealSense 없을 시 0으로 자동 폴백) | `auto` | `--device 0` |
 | `--record` | 20-DOF VLA 로봇 데이터셋 수집 노드 백그라운드 구동 | `false` | `--record` |
 | `--no-gui` | GUI 창 없이 백그라운드(Headless) 실행 | `false` | `--no-gui` |
 
@@ -279,10 +310,18 @@ docker exec -it ros_humble_dev bash -c "
 
 ## 🔍 트러블슈팅 가이드 (Troubleshooting)
 
+### 🚨 1초 만에 해결: 카메라가 안 켜지거나(검은 화면) "손 연결 실패" 발생 시
+- **원인**: 이전 실행 세션을 `Ctrl+C`로 끝내지 않고 터미널을 강제 종료하여, 이전 프로세스가 카메라 디바이스(`/dev/video0`)나 Modbus 포트(`502`)를 백그라운드에서 물고 있는 경우입니다.
+- **해결책 (원클릭 1초 리셋 명령어)**:
+  ```bash
+  docker exec ros_humble_dev pkill -9 -f "ros2|teleop|controller_manager|rviz2|python3"
+  ```
+  이 명령어 한 줄만 터미널에 입력하면 충돌 중인 잔여 프로세스가 깨끗이 종료되며, 바로 정상 재실행할 수 있습니다.
+
 ### Q1. "호스트에서 python3 teleop_dashboard_v6.py를 실행했더니 `ModuleNotFoundError: No module named 'mediapipe'` 에러가 납니다."
 - **원인**: 본 패키지의 ROS 2 드라이버와 MediaPipe 환경은 **`ros_humble_dev` Docker 컨테이너 내부**에 완벽하게 빌드되어 있습니다. 호스트 머신의 기본 파이썬에는 패키지가 설치되어 있지 않아 발생하는 현상입니다.
 - **해결책**:
-  - 스크립트를 수동으로 직접 띄우지 마시고, 올인원 런처인 `~/run_v6.sh` (또는 `run_v6 real`)를 실행하십시오.
+  - 스크립트를 수동으로 직접 띄우지 마시고, 올인원 런처인 `~/run_v6.sh` (또는 `docker exec ... run_v6 real`)를 실행하십시오.
   - `run_v6.sh`는 호스트 터미널에서 실행되더라도 스스로를 감지하여 자동으로 `ros_humble_dev` 컨테이너 내부로 전환하고, X11 디스플레이를 호스트 모니터로 안전하게 포워딩하여 띄워줍니다.
 
 ### Q2. "엄지손가락이 안 움직이거나 엉뚱한 방향으로 버팁니다."
@@ -296,18 +335,14 @@ docker exec -it ros_humble_dev bash -c "
 ### Q3. "RVIZ에서 로봇 손이 흩어져 보이고 조인트가 굳어 있습니다."
 - **원인**: 로봇의 24V 전원이 꺼져 있거나 랜선이 연결되지 않아 `ros2_control_node`가 하드웨어 통신 타임아웃으로 중단된 상태입니다.
 - **해결책**:
-  1. 로봇 전원 박스 24V 스위치가 켜져 있는지 확인합니다.
+  1. 로봇 전원 박스 24V 스위치가 켜져 있는지 확인합니다 (초록색 LED 점등).
   2. PC 유선 랜 설정이 `192.168.1.10/24`인지 확인합니다.
   3. 터미널에서 `ping 192.168.1.100`이 응답하는지 확인 후 `run_v6 real`을 재시작합니다.
 
 ### Q4. "RealSense 카메라가 켜지지 않거나 Device or resource busy 에러가 납니다."
-- **원인**: 이전 실행 세션이 정상 종료되지 않아 비디오 노드(`/dev/video8`)를 이전 프로세스가 잡고 있는 경우입니다.
+- **원인**: 이전 실행 세션이 정상 종료되지 않아 비디오 노드를 이전 프로세스가 잡고 있는 경우입니다.
 - **해결책**:
-  - 컨테이너 내부의 잔여 프로세스를 깔끔히 정리합니다:
-    ```bash
-    docker exec ros_humble_dev pkill -9 -f "vision_tracker|retargeting|sim_bridge|teleop_dashboard"
-    ```
-  - 노트북 내장 카메라로 전환하여 테스트하려면 `--device 0` 옵션을 부여합니다:
+  - 위의 1초 리셋 명령어를 실행하거나 노트북 내장 웹캠으로 전환합니다:
     ```bash
     ~/run_v6.sh real --device 0
     ```
