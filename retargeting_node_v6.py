@@ -294,13 +294,15 @@ class KinematicRetargetingNode(Node):
             q03 = max(q03, fist_w * 1.00)
 
         if self.hand_side == "left":
-            # Left Hand URDF (allegro_hand_v6_left.urdf) uses axis [0, 0, -1] for joint00.
-            # Rotating inward towards the palm and fingers requires negative angle (-0.05 ~ -1.40 rad).
-            # (Positive angle rotates outward away from palm).
-            q00_out = -float(q00)  # Inverted: sweeps inward across palm towards fingers
-            q01_out = -float(q01)  # Elevation/swing forward is POSITIVE (+0.10 ~ +0.80 rad) on left hand axis
-            q02_out = float(q02)   # MCP flexion is POSITIVE (0.0 ~ 1.2 rad) -> curls forward
-            q03_out = float(q03)   # IP tip curl is POSITIVE (0.0 ~ 1.3 rad) -> curls forward
+            # Left Hand URDF:
+            # - joint00 (Opposition): Rotates across palm into front plane towards index (+0.05 ~ +1.40 rad)
+            # - joint01 (Inward Swing): Swings into palm towards index (+0.12 open ~ -0.75 flexed)
+            # - joint02 (MCP Flexion): Curls forward (+0.0 ~ +1.20 rad)
+            # - joint03 (IP Curl): Curls forward (+0.0 ~ +1.30 rad)
+            q00_out = float(q00)   # Opposition rotates across palm towards index
+            q01_out = float(q01)   # Inward swing towards fingers
+            q02_out = float(q02)   # MCP flexion curls forward
+            q03_out = float(q03)   # IP tip curl curls forward
         else:
             q00_out = float(q00)
             q01_out = float(q01)
