@@ -69,7 +69,7 @@ RATE="100"
 FPS="60"
 RECORD_FLAG=false
 USE_DASHBOARD=true
-HAND_SIDE="left"  # Default to 'left' since connected hardware is Left Hand (P6LA0020)
+HAND_SIDE="left"  # Default to 'left' for Left Hand model
 USER_SPECIFIED_HAND=false
 
 # Parse arguments

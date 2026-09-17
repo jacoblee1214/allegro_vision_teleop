@@ -84,7 +84,7 @@ LEFT_THUMB_CONFIG = {
     # Motor polarity on Left HW: negative values rotate UPWARD along index
     # Amplified elevation range to 1.50 rad (~86 deg) for full upward reach
     "j01_sign": -1.0,
-    "j01_flat": 0.20,           # Open flat resting angle (rad)
+    "j01_flat": 0.10,           # Open flat resting angle (rad)
     "j01_elev_max": 1.50,       # Max upward elevation (rad, ~86 deg)
     "j01_pinch": 0.75,          # Target during pinch (rad, ~43 deg)
     "j01_fist": 0.45,           # Target during fist (rad)
@@ -370,10 +370,13 @@ class KinematicRetargetingNode(Node):
             q1 = float(np.clip(np.arctan2(proj_norm - 0.01, norm_in_plane) * 1.15, 0.0, 1.571))
 
         # 3. Joint 2: PIP Flexion (세 번째 관절: 중간 마디 굽힘)
-        q2 = angle_between(v_prox, v_inter) * 1.00
+        # 0.06 rad 데드밴드를 적용하여 손을 폈을 때 미세한 자연 곡률로 인한 굽힘을 완전히 0으로 신전
+        q2_raw = angle_between(v_prox, v_inter)
+        q2 = float(np.clip(max(0.0, q2_raw - 0.06) * 1.10, 0.0, 1.396))
 
         # 4. Joint 3: DIP Flexion (네 번째 관절: 끝 마디 굽힘)
-        q3 = angle_between(v_inter, v_dist) * 1.00
+        q3_raw = angle_between(v_inter, v_dist)
+        q3 = float(np.clip(max(0.0, q3_raw - 0.06) * 1.10, 0.0, 1.396))
 
         base_prefix = prefix.removeprefix("ah_")
         res = {
@@ -413,26 +416,31 @@ class KinematicRetargetingNode(Node):
         u_thumb_ray = v_thumb_ray / (np.linalg.norm(v_thumb_ray) + 1e-6)
 
         # 1. Base Opposition (joint00)
-        proj_norm = np.dot(u_thumb_ray, u_norm)
-        # On Left hand, thumb is towards +u_trans (lateral), so spreading open is +u_trans
-        proj_lat = np.dot(u_thumb_ray, u_trans)
-        opp_angle = np.arctan2(proj_norm, proj_lat)
-        q00 = float(np.interp(opp_angle, [-0.25, 1.10], [LEFT_THUMB_CONFIG["j00_min"], LEFT_THUMB_CONFIG["j00_max"]]))
+        proj_norm = float(np.dot(u_thumb_ray, u_norm))
+        # Spreading open laterally away from palm/pinky is -u_trans
+        proj_lat = float(np.dot(u_thumb_ray, -u_trans))
+        opp_angle = float(np.arctan2(proj_norm, proj_lat))
+
+        # When thumb is splayed wide open laterally (proj_lat > 0.20), enforce wide open angle
+        open_bias = float(np.clip((proj_lat - 0.20) / 0.45, 0.0, 1.0))
+        q00_raw = float(np.interp(opp_angle, [0.10, 1.20], [LEFT_THUMB_CONFIG["j00_min"], LEFT_THUMB_CONFIG["j00_max"]]))
+        q00 = (1.0 - open_bias * 0.75) * q00_raw + (open_bias * 0.75) * LEFT_THUMB_CONFIG["j00_min"]
 
         # 2. Base Elevation / Upward Swing (joint01)
-        # proj_fwd measures pointing UPWARD along index/middle fingers
+        # Elevation along index finger: thumb aligns parallel to index (high proj_fwd, low proj_lat)
         proj_fwd = float(np.dot(u_thumb_ray, u_fwd))
-        elev_up = float(np.clip((proj_fwd - 0.00) / 0.40, 0.0, 1.0))
+        elev_align = float(np.clip((proj_fwd - 0.70) / 0.25, 0.0, 1.0)) * float(np.clip((0.45 - proj_lat) / 0.30, 0.0, 1.0))
 
-        # Dynamic elevation reaching up to j01_elev_max (1.50 rad ~ 86 deg)
-        q01_mag = float(np.interp(proj_norm, [-0.15, 0.40], [
-            LEFT_THUMB_CONFIG["j01_flat"] + elev_up * (LEFT_THUMB_CONFIG["j01_elev_max"] - LEFT_THUMB_CONFIG["j01_flat"]),
-            0.70 + elev_up * 0.50
-        ]))
+        q01_base = float(np.interp(proj_norm, [-0.15, 0.45], [LEFT_THUMB_CONFIG["j01_flat"], 0.65]))
+        # When hand is wide open, keep thumb resting near flat (0.10~0.20 rad)
+        q01_base = (1.0 - open_bias * 0.60) * q01_base + (open_bias * 0.60) * 0.12
+        # When elevated along index, dynamically reach up to j01_elev_max (1.50 rad ~ 86 deg)
+        q01_mag = q01_base + elev_align * (LEFT_THUMB_CONFIG["j01_elev_max"] - q01_base)
 
         # 3. Flexion angles (joint02, joint03)
-        q02_bone = angle_between(v_thumb_prox, v_thumb_mid)
-        q03_bone = angle_between(v_thumb_mid, v_thumb_dist)
+        # Small deadband (0.08 rad) so thumb opens straight without residual bone curvature
+        q02_bone = max(0.0, angle_between(v_thumb_prox, v_thumb_mid) - 0.08)
+        q03_bone = max(0.0, angle_between(v_thumb_mid, v_thumb_dist) - 0.08)
         q02 = q02_bone * LEFT_THUMB_CONFIG["j02_scale"]
         q03 = q03_bone * LEFT_THUMB_CONFIG["j03_scale"]
 

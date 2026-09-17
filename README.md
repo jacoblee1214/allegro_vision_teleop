@@ -57,7 +57,7 @@ Wonik Allegro Hand V6 내부 제어기(MCU) 비휘발성 메모리에는 손의 
   - `0x0000` (0) : **Left Hand (왼손)**
   - `0x0001` (1) : **Right Hand (오른손)**
 - **Holding Register `0x0318 ~ 0x031B` (8바이트 ASCII)**:
-  - 시리얼 번호 (예: `P6LA0020` -> `LA`는 Left Allegro, `RA`는 Right Allegro)
+  - 시리얼 번호 모델 식별 (`LA`는 Left Allegro, `RA`는 Right Allegro)
 - `run_teleop_v6.sh`는 `real` 모드 진입 시 소켓 통신을 통해 `0x0071` 레지스터를 5ms 내에 단발 조회하여 연결된 하드웨어 타입을 자동 식별합니다.
 
 ### 2. 완전 독립 듀얼 파이프라인 아키텍처 (Isolated Dual-Pipeline Architecture)
@@ -362,7 +362,7 @@ docker exec -it ros_humble_dev bash -c "
 ---
 
 ## 👥 인수인계 담당자 안내 (Handover Notice)
-- **로봇 하드웨어 기종**: Wonik Robotics Allegro Hand V6 (Left Hand, S/N: `P6LA0020`, FW: `0x0300`)
+- **로봇 하드웨어 기종**: Wonik Robotics Allegro Hand V6 (Left Hand, FW: `0x0300`)
 - **핵심 소스코드 위치**:
   - `/home/jake/humble_ws/allegro_vision_teleop/` (ROS 2 패키지 및 텔레옵 알고리즘)
   - `/home/jake/humble_ws/src/allegro_hand_v6/` (원익 로보틱스 공식 드라이버 & C++ SDK)
