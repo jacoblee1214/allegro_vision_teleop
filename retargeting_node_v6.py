@@ -357,17 +357,11 @@ class KinematicRetargetingNode(Node):
         else:
             q0 = signed_abduction_angle(v_prox, palm_forward, palm_normal) * 0.85
 
-        # 2. Joint 1: MCP Flexion (두 번째 관절: 굽힘/접힘)
-        # 손바닥 평면 수직 투영(Out-of-palm-plane projection) 기법 적용:
-        # 손바닥의 방사형 골격 각도로 인해 손가락이 펼쳐진 상태에서도 접혀서(18°~32°) 시작하던 문제 완전 제거
-        u_norm = palm_normal / (np.linalg.norm(palm_normal) + 1e-8)
-        proj_norm = float(np.dot(v_prox, u_norm))
-        v_in_plane = v_prox - proj_norm * u_norm
-        norm_in_plane = float(np.linalg.norm(v_in_plane))
-        if proj_norm <= 0.01:
-            q1 = 0.0
-        else:
-            q1 = float(np.clip(np.arctan2(proj_norm - 0.01, norm_in_plane) * 1.15, 0.0, 1.571))
+        # 2. Joint 1: MCP Flexion (두 번째 관절: 기저 굽힘)
+        # 사용자 피드백 반영: 엄지 제외 4개 손가락 2번째 관절(joint11, 21, 31, 41)에서 90도(np.deg2rad(90.0) = 1.571 rad) 감산 정규화
+        v_meta = pts[mcp_idx] - pts[WRIST]
+        q1_raw = angle_between(v_meta, v_prox)
+        q1 = float(np.clip(q1_raw - np.deg2rad(90.0), 0.0, 1.571))
 
         # 3. Joint 2: PIP Flexion (세 번째 관절: 중간 마디 굽힘)
         # 0.06 rad 데드밴드를 적용하여 손을 폈을 때 미세한 자연 곡률로 인한 굽힘을 완전히 0으로 신전
