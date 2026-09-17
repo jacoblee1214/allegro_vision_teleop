@@ -194,7 +194,7 @@
     <parent link="Finger02_Link01"/>
     <child link="Finger02_Link02"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-1.6580628" upper="1.5707963" effort="15.0" velocity="7.0"/>
+    <limit lower="-0.0698132" upper="1.5707963" effort="15.0" velocity="7.0"/>
   </joint>
   <link name="Finger02_Link03">
     <inertial>
@@ -310,7 +310,7 @@
     <parent link="Finger03_Link01"/>
     <child link="Finger03_Link02"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-1.6580628" upper="1.5707963" effort="15.0" velocity="7.0"/>
+    <limit lower="-0.0698132" upper="1.5707963" effort="15.0" velocity="7.0"/>
   </joint>
   <link name="Finger03_Link03">
     <inertial>
@@ -426,7 +426,7 @@
     <parent link="Finger04_Link01"/>
     <child link="Finger04_Link02"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-1.6580628" upper="1.5707963" effort="15.0" velocity="7.0"/>
+    <limit lower="-0.0698132" upper="1.5707963" effort="15.0" velocity="7.0"/>
   </joint>
   <link name="Finger04_Link03">
     <inertial>
@@ -542,7 +542,7 @@
     <parent link="Finger05_Link01"/>
     <child link="Finger05_Link02"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-1.6580628" upper="1.5707963" effort="15.0" velocity="7.0"/>
+    <limit lower="-0.0698132" upper="1.5707963" effort="15.0" velocity="7.0"/>
   </joint>
   <link name="Finger05_Link03">
     <inertial>

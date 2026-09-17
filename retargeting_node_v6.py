@@ -358,11 +358,10 @@ class KinematicRetargetingNode(Node):
             q0 = signed_abduction_angle(v_prox, palm_forward, palm_normal) * 0.85
 
         # 2. Joint 1: MCP Flexion (두 번째 관절: 기저 굽힘)
-        # 사용자 피드백 반영: 엄지 제외 4개 손가락 2번째 관절(joint11, 21, 31, 41)에 -90도(-1.5708 rad) 모터 오프셋 적용
-        # 실제 모터 영점(0.0 rad)에서 90도 굽힘 상태이므로, 모터 명령값에 -90도(-1.5708 rad) 오프셋이 적용되어야 손이 완전히 직립 신전됨
+        # 손을 폈을 때 0.0 rad(완전 직립 신전), 손을 접을 때 0.0 ~ 1.571 rad로 자연스럽게 정방향 굽힘
         v_meta = pts[mcp_idx] - pts[WRIST]
         q1_raw = angle_between(v_meta, v_prox)
-        q1 = float(np.clip(q1_raw - np.deg2rad(90.0), -1.658, 1.571))
+        q1 = float(np.clip(max(0.0, q1_raw - 0.05) * 1.10, 0.0, 1.571))
 
         # 3. Joint 2: PIP Flexion (세 번째 관절: 중간 마디 굽힘)
         # 0.06 rad 데드밴드를 적용하여 손을 폈을 때 미세한 자연 곡률로 인한 굽힘을 완전히 0으로 신전

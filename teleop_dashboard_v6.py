@@ -69,10 +69,22 @@ if "QT_QPA_PLATFORM_PLUGIN_PATH" not in os.environ and os.path.exists("/usr/lib/
 
 # 2. Import PyQt5 BEFORE cv2 and lock libraryPaths to system Qt plugins
 from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtCore import QCoreApplication, Qt, QTimer
+from PyQt5.QtCore import QCoreApplication, QPointF, Qt, QTimer
 if os.path.exists("/usr/lib/x86_64-linux-gnu/qt5/plugins"):
     QCoreApplication.setLibraryPaths(["/usr/lib/x86_64-linux-gnu/qt5/plugins"])
-from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPalette, QPixmap
+from PyQt5.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QImage,
+    QLinearGradient,
+    QPainter,
+    QPalette,
+    QPen,
+    QPixmap,
+    QPolygonF,
+    QRadialGradient,
+)
 from PyQt5.QtWidgets import (
     QApplication,
     QFrame,
@@ -144,19 +156,19 @@ LIMITS_V6 = {
     "joint02": (-0.175, 1.309),
     "joint03": (-0.175, 1.396),
     "joint10": (-1.309, 1.309),
-    "joint11": (-1.658, 1.571),
+    "joint11": (-0.070, 1.571),
     "joint12": (-0.175, 1.396),
     "joint13": (-0.175, 1.396),
     "joint20": (-1.135, 1.135),
-    "joint21": (-1.658, 1.571),
+    "joint21": (-0.070, 1.571),
     "joint22": (-0.175, 1.396),
     "joint23": (-0.175, 1.396),
     "joint30": (-1.309, 1.309),
-    "joint31": (-1.658, 1.571),
+    "joint31": (-0.070, 1.571),
     "joint32": (-0.175, 1.396),
     "joint33": (-0.175, 1.396),
     "joint40": (-1.309, 1.309),
-    "joint41": (-1.658, 1.571),
+    "joint41": (-0.070, 1.571),
     "joint42": (-0.175, 1.396),
     "joint43": (-0.175, 1.396),
 }
@@ -217,6 +229,272 @@ def get_urdf_content(hand_side: str) -> str:
         if path.exists():
             return path.read_text(encoding="utf-8")
     return ""
+
+
+class RobotHand3DWidget(QWidget):
+    """
+    Real-time 3D URDF Kinematics Visualizer for Allegro Hand V6 (5-Finger, 20-DOF).
+    Renders 3D robot hand model with interactive mouse orbit, zoom, and live joint updates.
+    """
+
+    def __init__(self, hand_side: str = "left", parent=None):
+        super().__init__(parent)
+        self.hand_side = hand_side.lower()
+        self.setMinimumSize(380, 420)
+        self.setStyleSheet("background-color: #0b0b12; border: 1px solid #333348; border-radius: 8px;")
+
+        # Joint angles (rad)
+        self.joint_positions = [0.0] * 20
+        self.pinch_active = False
+
+        # Camera spherical view parameters
+        self.azimuth_default = 30.0 if self.hand_side == "left" else -30.0
+        self.elevation_default = 18.0
+        self.distance_default = 1.0
+
+        self.azimuth = self.azimuth_default
+        self.elevation = self.elevation_default
+        self.distance = self.distance_default
+
+        self._last_mouse_pos = None
+
+        # Finger color themes
+        self.finger_colors = [
+            QColor(245, 158, 11),   # Thumb: Amber/Gold
+            QColor(56, 189, 248),    # Index: Sky Blue
+            QColor(129, 140, 248),   # Middle: Indigo
+            QColor(168, 85, 247),    # Ring: Purple
+            QColor(251, 113, 133),   # Pinky: Rose
+        ]
+
+    def set_hand_side(self, hand_side: str):
+        self.hand_side = hand_side.lower()
+        self.reset_camera()
+        self.update()
+
+    def reset_camera(self):
+        self.azimuth = 30.0 if self.hand_side == "left" else -30.0
+        self.elevation = self.elevation_default
+        self.distance = self.distance_default
+        self.update()
+
+    def update_joints(self, joint_angles: list, pinch_active: bool = False):
+        if len(joint_angles) >= 20:
+            self.joint_positions = list(joint_angles[:20])
+            self.pinch_active = pinch_active
+            self.update()
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self._last_mouse_pos = event.pos()
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent):
+        if self._last_mouse_pos is not None and event.buttons() & Qt.LeftButton:
+            dx = event.x() - self._last_mouse_pos.x()
+            dy = event.y() - self._last_mouse_pos.y()
+            self.azimuth = (self.azimuth + dx * 0.7) % 360.0
+            self.elevation = float(np.clip(self.elevation - dy * 0.6, -85.0, 85.0))
+            self._last_mouse_pos = event.pos()
+            self.update()
+
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent):
+        self._last_mouse_pos = None
+
+    def wheelEvent(self, event: QtGui.QWheelEvent):
+        delta = event.angleDelta().y()
+        zoom_factor = 0.92 if delta > 0 else 1.08
+        self.distance = float(np.clip(self.distance * zoom_factor, 0.4, 2.5))
+        self.update()
+
+    def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent):
+        self.reset_camera()
+
+    def _rot_z(self, rad: float) -> np.ndarray:
+        c, s = np.cos(rad), np.sin(rad)
+        return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
+    def _rot_x(self, rad: float) -> np.ndarray:
+        c, s = np.cos(rad), np.sin(rad)
+        return np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+
+    def _rot_y(self, rad: float) -> np.ndarray:
+        c, s = np.cos(rad), np.sin(rad)
+        return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
+
+    def _compute_kinematics(self):
+        """Computes 3D coordinates for palm and all 5 fingers based on joint positions."""
+        is_left = (self.hand_side == "left")
+        mirror = 1.0 if is_left else -1.0
+
+        # Palm base geometry
+        palm_pts = [
+            np.array([-0.052 * mirror, 0.012, 0.010]),
+            np.array([ 0.052 * mirror, 0.012, 0.010]),
+            np.array([ 0.052 * mirror, 0.012, 0.090]),
+            np.array([ 0.020 * mirror, 0.012, 0.100]),
+            np.array([-0.020 * mirror, 0.012, 0.100]),
+            np.array([-0.052 * mirror, 0.012, 0.090]),
+        ]
+
+        # Finger base attachments (MCP origins on palm)
+        finger_bases = [
+            np.array([-0.026 * mirror, -0.015, 0.018]),  # Thumb base
+            np.array([-0.044 * mirror,  0.012, 0.095]),  # Index base
+            np.array([-0.015 * mirror,  0.012, 0.101]),  # Middle base
+            np.array([ 0.015 * mirror,  0.012, 0.095]),  # Ring base
+            np.array([ 0.044 * mirror,  0.012, 0.086]),  # Pinky base
+        ]
+
+        finger_chains = []
+
+        # 1. Thumb Kinematics (Joints 0..3)
+        q_th = self.joint_positions[0:4]
+        p0 = finger_bases[0]
+        R_th = self._rot_z(-0.25 * mirror) @ self._rot_y(0.20 * mirror)
+        R_th = R_th @ self._rot_z(q_th[0] * (1.0 if is_left else -1.0))
+        p1 = p0 + R_th @ np.array([0.016 * mirror, -0.012, -0.014])
+        R_th = R_th @ self._rot_y(q_th[1] * (1.0 if is_left else -1.0))
+        p2 = p1 + R_th @ np.array([0.0, 0.0, 0.045])
+        R_th = R_th @ self._rot_x(q_th[2])
+        p3 = p2 + R_th @ np.array([0.0, 0.0, 0.040])
+        R_th = R_th @ self._rot_x(q_th[3])
+        p4 = p3 + R_th @ np.array([0.0, 0.0, 0.030])
+        finger_chains.append([p0, p1, p2, p3, p4])
+
+        # 2~5. Four Fingers (Index, Middle, Ring, Pinky)
+        link_lens = [0.016, 0.054, 0.038, 0.026]
+        for f_idx in range(1, 5):
+            j_start = f_idx * 4
+            q = self.joint_positions[j_start:j_start + 4]
+            base_p = finger_bases[f_idx]
+
+            # Joint 0: Abduction (yaw around Z)
+            R_f = self._rot_z(q[0])
+            p1 = base_p + R_f @ np.array([0.0, 0.0, link_lens[0]])
+
+            # Joint 1: MCP Flexion (pitch around X)
+            R_f = R_f @ self._rot_x(q[1])
+            p2 = p1 + R_f @ np.array([0.0, 0.0, link_lens[1]])
+
+            # Joint 2: PIP Flexion
+            R_f = R_f @ self._rot_x(q[2])
+            p3 = p2 + R_f @ np.array([0.0, 0.0, link_lens[2]])
+
+            # Joint 3: DIP Flexion
+            R_f = R_f @ self._rot_x(q[3])
+            p4 = p3 + R_f @ np.array([0.0, 0.0, link_lens[3]])
+
+            finger_chains.append([base_p, p1, p2, p3, p4])
+
+        return palm_pts, finger_chains
+
+    def _project(self, pt: np.ndarray, w: float, h: float) -> tuple[float, float, float]:
+        """Projects a 3D point (x, y, z) into 2D screen coordinates (u, v) and depth."""
+        az = np.radians(self.azimuth)
+        el = np.radians(self.elevation)
+
+        cx, cy, cz = 0.0, 0.0, 0.12
+        px, py, pz = pt[0] - cx, pt[1] - cy, pt[2] - cz
+
+        xc = px * np.cos(az) - py * np.sin(az)
+        yc = px * np.sin(az) + py * np.cos(az)
+        zc = pz
+
+        xv = xc
+        yv = yc * np.cos(el) - zc * np.sin(el)
+        zv = yc * np.sin(el) + zc * np.cos(el)
+
+        d = 0.55 * self.distance
+        proj = d / (d + yv + 0.05)
+        scale = min(w, h) * 2.2
+
+        u = (w * 0.5) + (xv * scale * proj)
+        v = (h * 0.55) - (zv * scale * proj)
+        return u, v, yv
+
+    def paintEvent(self, event: QtGui.QPaintEvent):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        w = float(self.width())
+        h = float(self.height())
+
+        # Background Gradient
+        bg_grad = QLinearGradient(0, 0, 0, h)
+        bg_grad.setColorAt(0.0, QColor(16, 16, 26))
+        bg_grad.setColorAt(1.0, QColor(8, 8, 14))
+        painter.fillRect(self.rect(), bg_grad)
+
+        palm_pts, finger_chains = self._compute_kinematics()
+
+        drawables = []
+
+        # 1. Palm Base
+        proj_palm = [self._project(p, w, h) for p in palm_pts]
+        avg_palm_depth = float(np.mean([p[2] for p in proj_palm]))
+        drawables.append(("palm", avg_palm_depth, proj_palm))
+
+        # 2. Finger segments and joints
+        for f_idx, chain in enumerate(finger_chains):
+            proj_chain = [self._project(p, w, h) for p in chain]
+            for seg_idx in range(len(proj_chain) - 1):
+                p_a = proj_chain[seg_idx]
+                p_b = proj_chain[seg_idx + 1]
+                seg_depth = (p_a[2] + p_b[2]) * 0.5
+                drawables.append(("segment", seg_depth, (f_idx, seg_idx, p_a, p_b)))
+            for j_idx, pt in enumerate(proj_chain):
+                drawables.append(("joint", pt[2], (f_idx, j_idx, pt)))
+
+        # Sort drawables by depth: highest yv (farthest) drawn first!
+        drawables.sort(key=lambda d: d[1], reverse=True)
+
+        for dtype, depth, data in drawables:
+            if dtype == "palm":
+                poly = QPolygonF([QPointF(p[0], p[1]) for p in data])
+                palm_brush = QBrush(QColor(30, 32, 48, 220))
+                painter.setBrush(palm_brush)
+                painter.setPen(QPen(QColor(70, 75, 110), 2))
+                painter.drawPolygon(poly)
+
+            elif dtype == "segment":
+                f_idx, seg_idx, pa, pb = data
+                color = self.finger_colors[f_idx]
+                thickness = max(4.0, 10.0 - seg_idx * 1.8)
+                painter.setPen(QPen(color, thickness, Qt.SolidLine, Qt.RoundCap))
+                painter.drawLine(QPointF(pa[0], pa[1]), QPointF(pb[0], pb[1]))
+
+            elif dtype == "joint":
+                f_idx, j_idx, pt = data
+                u, v, _ = pt
+                radius = 8.0 if j_idx == 4 else (7.0 - j_idx * 0.8)
+                rad_grad = QRadialGradient(u - radius * 0.3, v - radius * 0.3, radius)
+                if j_idx == 4:  # Fingertip
+                    rad_grad.setColorAt(0.0, QColor(255, 255, 255))
+                    rad_grad.setColorAt(0.4, self.finger_colors[f_idx])
+                    rad_grad.setColorAt(1.0, QColor(20, 20, 30))
+                else:  # Metallic joint sphere
+                    rad_grad.setColorAt(0.0, QColor(220, 230, 250))
+                    rad_grad.setColorAt(0.6, QColor(80, 85, 120))
+                    rad_grad.setColorAt(1.0, QColor(20, 20, 30))
+
+                painter.setBrush(QBrush(rad_grad))
+                painter.setPen(QPen(QColor(30, 30, 45), 1))
+                painter.drawEllipse(QPointF(u, v), radius, radius)
+
+        # Draw Cockpit HUD Overlay
+        painter.setPen(QColor(180, 190, 220))
+        painter.setFont(QFont("Monospace", 9, QFont.Bold))
+        hand_txt = f"URDF 3D: [ {'LEFT' if self.hand_side == 'left' else 'RIGHT'} HAND ]"
+        painter.drawText(14, 24, hand_txt)
+
+        painter.setPen(QColor(120, 130, 160))
+        painter.setFont(QFont("SansSerif", 8))
+        cam_info = f"Azimuth: {self.azimuth:.0f}° | Tilt: {self.elevation:.0f}° | Zoom: {1.0/self.distance:.1f}x"
+        painter.drawText(14, 42, cam_info)
+
+        tip_info = "🖱️ Drag: Rotate | Scroll: Zoom | Dbl-Click: Reset"
+        painter.drawText(14, int(h - 12), tip_info)
 
 
 class RosWorkerNode(Node):
@@ -388,8 +666,8 @@ class TeleopDashboardWindow(QMainWindow):
 
     def init_ui(self) -> None:
         self.setWindowTitle("Allegro Hand V6 — Teleoperation Cockpit & VLA Dataset Collector")
-        self.resize(1380, 860)
-        self.setMinimumSize(1100, 700)
+        self.resize(1560, 860)
+        self.setMinimumSize(1200, 700)
 
         # Apply Modern Dark Theme Stylesheet
         self.setStyleSheet("""
@@ -483,7 +761,7 @@ class TeleopDashboardWindow(QMainWindow):
         # Video Frame Label
         self.lbl_video = QLabel()
         self.lbl_video.setAlignment(Qt.AlignCenter)
-        self.lbl_video.setMinimumSize(640, 480)
+        self.lbl_video.setMinimumSize(480, 360)
         self.lbl_video.setStyleSheet("background-color: #0b0b10; border: 1px solid #333348; border-radius: 8px;")
         left_layout.addWidget(self.lbl_video, stretch=1)
 
@@ -499,6 +777,33 @@ class TeleopDashboardWindow(QMainWindow):
         left_layout.addLayout(meta_bar)
 
         main_layout.addLayout(left_layout, stretch=3)
+
+        # ─── CENTER COLUMN: 3D Robot Hand Kinematics Visualizer ───────────────────
+        center_layout = QVBoxLayout()
+        center_layout.setSpacing(10)
+
+        hand_3d_header = QHBoxLayout()
+        self.lbl_3d_title = QLabel("🤖 3D Robot Hand (URDF Kinematics)")
+        self.lbl_3d_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #ffffff;")
+        self.btn_reset_view = QPushButton("Reset View")
+        self.btn_reset_view.setStyleSheet("background-color: #242436; color: #38bdf8; border: 1px solid #383850; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: bold;")
+        hand_3d_header.addWidget(self.lbl_3d_title)
+        hand_3d_header.addStretch()
+        hand_3d_header.addWidget(self.btn_reset_view)
+        center_layout.addLayout(hand_3d_header)
+
+        self.widget_3d = RobotHand3DWidget(hand_side=self.hand_side)
+        self.btn_reset_view.clicked.connect(self.widget_3d.reset_camera)
+        center_layout.addWidget(self.widget_3d, stretch=1)
+
+        # 3D Helper status bar
+        hand_3d_footer = QHBoxLayout()
+        self.lbl_3d_status = QLabel("Interactive 3D View: Click & Drag to Orbit | Scroll to Zoom")
+        self.lbl_3d_status.setStyleSheet("color: #8888a8; font-size: 11px;")
+        hand_3d_footer.addWidget(self.lbl_3d_status)
+        center_layout.addLayout(hand_3d_footer)
+
+        main_layout.addLayout(center_layout, stretch=3)
 
         # ─── RIGHT COLUMN: Joint Telemetry & Cockpit Controls ────────────────────
         right_layout = QVBoxLayout()
@@ -665,7 +970,10 @@ class TeleopDashboardWindow(QMainWindow):
         # 1. Broadcast state to retargeting node
         self.broadcast_state()
 
-        # 2. Live update RViz and robot_state_publisher with the new hand model!
+        # 2. Update embedded 3D Robot Hand model
+        self.widget_3d.set_hand_side(self.hand_side)
+
+        # 3. Live update RViz and robot_state_publisher with the new hand model!
         new_urdf = self.urdf_right if self.hand_side == "right" else self.urdf_left
         if new_urdf:
             self.ros_node.update_robot_description(new_urdf)
@@ -838,6 +1146,10 @@ class TeleopDashboardWindow(QMainWindow):
             if jname in self.joint_labels:
                 short_name = jname.replace("joint", "j")
                 self.joint_labels[jname].setText(f"{short_name}: {val:+.2f}")
+
+        # Update 3D Robot Hand Kinematic View
+        is_pinch = (dist_cm < 2.5) if "dist_cm" in locals() else False
+        self.widget_3d.update_joints(target_q, pinch_active=is_pinch)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.timer.stop()

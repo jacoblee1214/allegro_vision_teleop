@@ -71,6 +71,7 @@ RECORD_FLAG=false
 USE_DASHBOARD=true
 HAND_SIDE="left"  # Default to 'left' for Left Hand model
 USER_SPECIFIED_HAND=false
+USE_RVIZ=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -135,6 +136,14 @@ while [[ $# -gt 0 ]]; do
             USE_DASHBOARD=true
             shift
             ;;
+        --rviz)
+            USE_RVIZ=true
+            shift
+            ;;
+        --no-rviz)
+            USE_RVIZ=false
+            shift
+            ;;
         -h|--help)
             echo "Usage: ./run_teleop.sh [nodes|sim|real] [--hand left|right] [--ip <ip|end_num>] [--rate 60|100] [--alpha 0.20] [--device 8] [--scale 1.75] [--fps 60] [--descriptor <desc>] [--no-gui]"
             echo ""
@@ -163,6 +172,14 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [ -z "$USE_RVIZ" ]; then
+    if [ "$USE_DASHBOARD" = true ] && [ -z "$GUI_FLAG" ]; then
+        USE_RVIZ="false"
+    else
+        USE_RVIZ="true"
+    fi
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 if [ ! -f "$SCRIPT_DIR/retargeting_node_v6.py" ]; then
@@ -235,6 +252,7 @@ echo " Camera     : $CAM_DESC (Capture: ${FPS} FPS)"
 echo " Descriptor : $DESCRIPTOR"
 echo " Scale      : ${SCALE}x"
 echo " GUI        : $([ -n "$GUI_FLAG" ] && echo "Disabled (Headless)" || echo "Enabled")"
+echo " 3D Hand    : $([ "$USE_RVIZ" = true ] && echo "Separate RViz2 Window" || echo "Embedded in Cockpit UI (Single Window)")"
 echo " Dir        : $SCRIPT_DIR"
 echo "========================================================"
 
@@ -264,8 +282,8 @@ trap cleanup SIGINT SIGTERM EXIT
 
 case "$MODE" in
     sim)
-        echo "[1/4] Launching Allegro Hand V6 ($HAND_SIDE hand) Mock Hardware & RViz2..."
-        ros2 launch allegro_hand_v6_bringup allegro_hand.launch.py ros2_control_hardware_type:=mock_components hand:="$HAND_SIDE" &
+        echo "[1/4] Launching Allegro Hand V6 ($HAND_SIDE hand) Mock Hardware ($([ "$USE_RVIZ" = true ] && echo "with RViz2" || echo "Headless + Cockpit 3D"))..."
+        ros2 launch allegro_hand_v6_bringup allegro_hand.launch.py ros2_control_hardware_type:=mock_components hand:="$HAND_SIDE" use_rviz:="$USE_RVIZ" &
         PIDS+=($!)
         sleep 3
         ;;
@@ -326,8 +344,8 @@ except Exception:
                 sleep 0.4
             fi
         fi
-        echo "[1/4] Launching Physical Allegro Hand V6 Hardware Interface ($DESCRIPTOR, hand:=$HAND_SIDE)..."
-        ros2 launch allegro_hand_v6_bringup allegro_hand.launch.py ros2_control_hardware_type:=hardware io_interface_descriptor:="$DESCRIPTOR" hand:="$HAND_SIDE" &
+        echo "[1/4] Launching Physical Allegro Hand V6 Hardware Interface ($DESCRIPTOR, hand:=$HAND_SIDE, rviz:=$USE_RVIZ)..."
+        ros2 launch allegro_hand_v6_bringup allegro_hand.launch.py ros2_control_hardware_type:=hardware io_interface_descriptor:="$DESCRIPTOR" hand:="$HAND_SIDE" use_rviz:="$USE_RVIZ" &
         PIDS+=($!)
         sleep 3
         ;;
