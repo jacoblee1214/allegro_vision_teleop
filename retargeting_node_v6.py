@@ -347,20 +347,33 @@ class KinematicRetargetingNode(Node):
           - NO sign inversion applied, ensuring natural outward finger spreading.
         """
         mcp_idx, pip_idx, dip_idx, tip_idx = indices
-        v_meta = pts[mcp_idx] - pts[WRIST]
         v_prox = pts[pip_idx] - pts[mcp_idx]
         v_inter = pts[dip_idx] - pts[pip_idx]
         v_dist = pts[tip_idx] - pts[dip_idx]
 
+        # 1. Joint 0: Abduction/Adduction (첫 번째 관절: 좌우 벌림)
         if prefix in ("joint2", "ah_joint2"):
             q0 = 0.0
         else:
-            q0 = signed_abduction_angle(v_prox, palm_forward, palm_normal) * 1.35
+            q0 = signed_abduction_angle(v_prox, palm_forward, palm_normal) * 0.85
 
-        q1 = angle_between(v_meta, v_prox) * 1.10
-        q2 = angle_between(v_prox, v_inter) * 1.05
-        q3_raw = angle_between(v_inter, v_dist)
-        q3 = ((1.0 - self.w_couple) * q3_raw + self.w_couple * (q2 * self.couple_ratio)) * 1.10
+        # 2. Joint 1: MCP Flexion (두 번째 관절: 굽힘/접힘)
+        # 손바닥 평면 수직 투영(Out-of-palm-plane projection) 기법 적용:
+        # 손바닥의 방사형 골격 각도로 인해 손가락이 펼쳐진 상태에서도 접혀서(18°~32°) 시작하던 문제 완전 제거
+        u_norm = palm_normal / (np.linalg.norm(palm_normal) + 1e-8)
+        proj_norm = float(np.dot(v_prox, u_norm))
+        v_in_plane = v_prox - proj_norm * u_norm
+        norm_in_plane = float(np.linalg.norm(v_in_plane))
+        if proj_norm <= 0.01:
+            q1 = 0.0
+        else:
+            q1 = float(np.clip(np.arctan2(proj_norm - 0.01, norm_in_plane) * 1.15, 0.0, 1.571))
+
+        # 3. Joint 2: PIP Flexion (세 번째 관절: 중간 마디 굽힘)
+        q2 = angle_between(v_prox, v_inter) * 1.00
+
+        # 4. Joint 3: DIP Flexion (네 번째 관절: 끝 마디 굽힘)
+        q3 = angle_between(v_inter, v_dist) * 1.00
 
         base_prefix = prefix.removeprefix("ah_")
         res = {
