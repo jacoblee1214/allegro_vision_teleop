@@ -22,18 +22,15 @@ CONTROLLER_JOINT_ORDER: list[str] = [
 ]
 N_JOINTS: int = 20
 
-# ─── Joint limits (rad) ────────────────────────────────────────────────────────
-# Allegro Hand V6 limits (exact URDF-verified from allegro_hand_v6_right.urdf)
-JOINT_LIMITS: dict[str, tuple[float, float]] = {
-    # Thumb (joint00~03): Supports both Left and Right Hand kinematic ranges
-    # Left Hand: J00 is negative opposition (-1.40~0), J01 is elevation (-0.2~1.4), J02/J03 are negative flexion (-1.4~0.2)
-    # Right Hand: J00 is positive opposition (0~1.40), J01 is elevation (-1.4~1.4), J02/J03 are positive flexion (-0.2~1.4)
-    "joint00": (-1.658,  1.658),
+# ─── Right Hand Joint Limits (exact URDF-verified from allegro_hand_v6_right.urdf) ──────────
+JOINT_LIMITS_RIGHT: dict[str, tuple[float, float]] = {
+    # Thumb (joint00~03): joint00=abduction/opposition, joint01=elevation/inward swing, joint02/03=flexion
+    "joint00": (-0.035,  1.658),
     "joint01": (-1.658,  1.658),
-    "joint02": (-1.400,  1.400),
-    "joint03": (-1.400,  1.400),
+    "joint02": (-0.175,  1.309),
+    "joint03": (-0.175,  1.396),
     # Index (joint10~13): joint10=abduction, joint11=MCP flexion, joint12=PIP, joint13=DIP
-    "joint10": (-1.309,  1.309),
+    "joint10": (-0.384,  1.309),
     "joint11": (-0.070,  1.571),
     "joint12": (-0.175,  1.396),
     "joint13": (-0.175,  1.396),
@@ -43,17 +40,60 @@ JOINT_LIMITS: dict[str, tuple[float, float]] = {
     "joint22": (-0.175,  1.396),
     "joint23": (-0.175,  1.396),
     # Ring (joint30~33)
-    "joint30": (-1.309,  1.309),
+    "joint30": (-1.309,  0.384),
     "joint31": (-0.070,  1.571),
     "joint32": (-0.175,  1.396),
     "joint33": (-0.175,  1.396),
     # Pinky (joint40~43)
-    "joint40": (-1.309,  1.309),
+    "joint40": (-1.309,  0.436),
     "joint41": (-0.070,  1.571),
     "joint42": (-0.175,  1.396),
     "joint43": (-0.175,  1.396),
 }
-# Alias with "ah_" prefix for backwards compatibility
+for _k, _v in list(JOINT_LIMITS_RIGHT.items()):
+    JOINT_LIMITS_RIGHT[f"ah_{_k}"] = _v
+
+# ─── Left Hand Joint Limits (exact URDF/HW-verified for allegro_hand_v6_left) ────────────────
+JOINT_LIMITS_LEFT: dict[str, tuple[float, float]] = {
+    # Thumb (joint00~03): opposition (-1.658~1.658), elevation (-1.658~1.658), flexion (-0.175~1.400)
+    "joint00": (-1.658,  1.658),
+    "joint01": (-1.658,  1.658),
+    "joint02": (-0.175,  1.400),
+    "joint03": (-0.175,  1.400),
+    # Index (joint10~13): negative spreads outward
+    "joint10": (-1.309,  0.384),
+    "joint11": (-0.070,  1.571),
+    "joint12": (-0.175,  1.396),
+    "joint13": (-0.175,  1.396),
+    # Middle (joint20~23)
+    "joint20": (-1.135,  1.135),
+    "joint21": (-0.070,  1.571),
+    "joint22": (-0.175,  1.396),
+    "joint23": (-0.175,  1.396),
+    # Ring (joint30~33): positive spreads outward
+    "joint30": (-0.384,  1.309),
+    "joint31": (-0.070,  1.571),
+    "joint32": (-0.175,  1.396),
+    "joint33": (-0.175,  1.396),
+    # Pinky (joint40~43): positive spreads outward
+    "joint40": (-0.436,  1.309),
+    "joint41": (-0.070,  1.571),
+    "joint42": (-0.175,  1.396),
+    "joint43": (-0.175,  1.396),
+}
+for _k, _v in list(JOINT_LIMITS_LEFT.items()):
+    JOINT_LIMITS_LEFT[f"ah_{_k}"] = _v
+
+def get_joint_limits(hand_side: str = "right") -> dict[str, tuple[float, float]]:
+    """Returns hand-specific joint limits dictionary ('left' or 'right')."""
+    return JOINT_LIMITS_LEFT if hand_side.lower() == "left" else JOINT_LIMITS_RIGHT
+
+# JOINT_LIMITS provides a safe union envelope for fallback/generic controllers:
+JOINT_LIMITS: dict[str, tuple[float, float]] = {
+    k: (min(JOINT_LIMITS_LEFT[k][0], JOINT_LIMITS_RIGHT[k][0]),
+        max(JOINT_LIMITS_LEFT[k][1], JOINT_LIMITS_RIGHT[k][1]))
+    for k in CONTROLLER_JOINT_ORDER
+}
 for _k, _v in list(JOINT_LIMITS.items()):
     JOINT_LIMITS[f"ah_{_k}"] = _v
 

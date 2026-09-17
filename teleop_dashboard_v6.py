@@ -190,9 +190,17 @@ def find_best_camera_device() -> tuple[int, str]:
 
 def get_urdf_content(hand_side: str) -> str:
     """Finds and reads the Allegro Hand V6 URDF for the specified hand side."""
+    # 1. Versioned teleop URDF has highest priority
+    teleop_urdf = Path(__file__).resolve().parent / "urdf" / f"allegro_hand_v6_{hand_side}_v6.1_teleop.urdf"
+    if teleop_urdf.exists():
+        return teleop_urdf.read_text(encoding="utf-8")
+
+    # 2. Local package URDFs
+    local_urdf = Path(__file__).resolve().parent / "urdf" / f"allegro_hand_v6_{hand_side}.urdf"
+    if local_urdf.exists():
+        return local_urdf.read_text(encoding="utf-8")
+
     candidates = [
-        Path(__file__).resolve().parent / "urdf" / f"allegro_hand_v6_{hand_side}_v6.1_teleop.urdf",
-        Path(__file__).resolve().parent / "urdf" / f"allegro_hand_v6_{hand_side}.urdf",
         Path(f"/home/humble_ws/src/allegro_hand_v6/allegro_hand_v6_description/urdf/allegro_hand_v6_{hand_side}.urdf"),
         Path(f"/home/jake/humble_ws/src/allegro_hand_v6/allegro_hand_v6_description/urdf/allegro_hand_v6_{hand_side}.urdf"),
         Path(f"/home/humble_ws/install/allegro_hand_v6_description/share/allegro_hand_v6_description/urdf/allegro_hand_v6_{hand_side}.urdf"),
@@ -201,7 +209,7 @@ def get_urdf_content(hand_side: str) -> str:
     try:
         from ament_index_python.packages import get_package_share_directory
         share_dir = get_package_share_directory("allegro_hand_v6_description")
-        candidates.insert(0, Path(share_dir) / "urdf" / f"allegro_hand_v6_{hand_side}.urdf")
+        candidates.append(Path(share_dir) / "urdf" / f"allegro_hand_v6_{hand_side}.urdf")
     except Exception:
         pass
 

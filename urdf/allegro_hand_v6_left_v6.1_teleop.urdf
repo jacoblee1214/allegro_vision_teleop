@@ -77,7 +77,7 @@
     <origin xyz="0.0164865864563188 -0.0122246663356633 -0.0140000000000291" rpy="1.5707963267949 -1.49593647908413 1.52752208949406"/>
     <parent link="Finger01_Link01"/>
     <child link="Finger01_Link02"/>
-    <axis xyz="0 0 -1"/>
+    <axis xyz="0 0 1"/>
     <limit lower="-1.6580628" upper="1.6580628" effort="15.0" velocity="7.0"/>
   </joint>
   <link name="Finger01_Link03">

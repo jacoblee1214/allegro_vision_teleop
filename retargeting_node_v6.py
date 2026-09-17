@@ -37,7 +37,14 @@ from std_msgs.msg import Float32MultiArray, Float64MultiArray, String
 
 # Dynamically import safety_utils_v6 from this script's directory
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from safety_utils_v6 import CONTROLLER_JOINT_ORDER, JOINT_LIMITS, N_JOINTS
+from safety_utils_v6 import (
+    CONTROLLER_JOINT_ORDER,
+    JOINT_LIMITS,
+    JOINT_LIMITS_LEFT,
+    JOINT_LIMITS_RIGHT,
+    N_JOINTS,
+    get_joint_limits,
+)
 
 INPUT_TOPIC = "/allegro/vision/landmarks"
 STATE_TOPIC = "/allegro/teleop_state"
@@ -64,20 +71,21 @@ QOS_PROFILE = QoSProfile(
 )
 
 # ─── Left Hand Thumb Kinematic Calibration Parameters ─────────────────────────
-# Direct numerical control over thumb joint signs (+1.0 or -1.0), gains, and ranges:
-LEFT_THUMB_CALIB = {
-    # joint00: Base Opposition (across palm towards index)
-    # -1.0: Rotates inward across palm | +1.0: Rotates outward
+# Direct numerical control over Left Hand thumb joint signs, gains, and ranges:
+LEFT_THUMB_CONFIG = {
+    # joint00: Base Opposition across palm towards index
+    # Motor polarity on Left HW: negative values rotate inward towards palm/index
     "j00_sign": -1.0,
     "j00_min": 0.05,            # Open flat (rad)
     "j00_max": 1.40,            # Max opposition (rad)
     "j00_pinch": 1.25,          # Target during pinch (rad)
 
-    # joint01: Elevation / Swing (upward along index vs downward)
-    # -1.0: Rotates UPWARD along index | +1.0: Rotates DOWNWARD
+    # joint01: Elevation / Swing (upward along index)
+    # Motor polarity on Left HW: negative values rotate UPWARD along index
+    # Amplified elevation range to 1.50 rad (~86 deg) for full upward reach
     "j01_sign": -1.0,
     "j01_flat": 0.20,           # Open flat resting angle (rad)
-    "j01_elev_max": 1.25,       # Max upward elevation (rad, ~72 deg)
+    "j01_elev_max": 1.50,       # Max upward elevation (rad, ~86 deg)
     "j01_pinch": 0.75,          # Target during pinch (rad, ~43 deg)
     "j01_fist": 0.45,           # Target during fist (rad)
 
@@ -91,6 +99,8 @@ LEFT_THUMB_CALIB = {
     "j03_scale": 2.10,          # Sensitivity gain for human thumb tip curl
     "j03_pinch": 0.70,
 }
+# Alias for backwards compatibility
+LEFT_THUMB_CALIB = LEFT_THUMB_CONFIG
 
 
 def angle_between(v1: np.ndarray, v2: np.ndarray) -> float:
@@ -149,7 +159,7 @@ class KinematicRetargetingNode(Node):
             QOS_PROFILE,
         )
 
-        # Subscriber: Teleop Operator State (Clutch, Record, Tag)
+        # Subscriber: Teleop Operator State (Clutch, Record, Tag, Hand Switch)
         self._sub_state = self.create_subscription(
             String,
             STATE_TOPIC,
@@ -164,10 +174,10 @@ class KinematicRetargetingNode(Node):
             QOS_PROFILE,
         )
 
-        self.get_logger().info(f"Allegro Hand V6 (5-Finger) Retargeting Node initialized.")
+        self.get_logger().info(f"Allegro Hand V6 (5-Finger) Retargeting Node initialized for {self.hand_side.upper()} HAND.")
         self.get_logger().info(f"Subscribed to: {INPUT_TOPIC} & {STATE_TOPIC}")
         self.get_logger().info(f"Publishing target joint angles ({N_JOINTS} joints) to: {OUTPUT_TOPIC}")
-        self.get_logger().info(f"Clutch Hold Control Active | EMA Filter alpha={self.lp_alpha:.2f}")
+        self.get_logger().info(f"Architecture: Isolated Dual Pipelines (Left vs Right Hand fully decoupled)")
 
     def _teleop_state_callback(self, msg: String) -> None:
         """Parses teleop operator status and toggles clutch hold behavior & hand side."""
@@ -185,11 +195,143 @@ class KinematicRetargetingNode(Node):
             new_hand = state.get("hand_side")
             if new_hand and new_hand in ("left", "right") and new_hand != self.hand_side:
                 self.hand_side = new_hand
-                self.get_logger().info(f"[UI HAND SWITCH] 🔄 Active Hand Model dynamically switched to: {self.hand_side.upper()} HAND")
+                self._filtered_q = None          # Reset filter history to prevent jump across models
+                self._last_target_angles = None
+                self.get_logger().info(f"[UI HAND SWITCH] 🔄 Active Hand Model switched to: {self.hand_side.upper()} HAND (filter reset)")
         except Exception as e:
             self.get_logger().error(f"Failed to parse teleop_state message: {e}")
 
-    def _compute_finger_joints(
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ─── RIGHT HAND PIPELINE (100% Proven & Restored Original Kinematics) ───────
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _compute_finger_joints_right(
+        self,
+        pts: np.ndarray,
+        indices: Tuple[int, int, int, int],
+        prefix: str,
+        palm_forward: np.ndarray,
+        palm_normal: np.ndarray,
+    ) -> Dict[str, float]:
+        """Computes 4 finger joint angles for RIGHT Hand (exact verified kinematics)."""
+        mcp_idx, pip_idx, dip_idx, tip_idx = indices
+        v_meta = pts[mcp_idx] - pts[WRIST]
+        v_prox = pts[pip_idx] - pts[mcp_idx]
+        v_inter = pts[dip_idx] - pts[pip_idx]
+        v_dist = pts[tip_idx] - pts[dip_idx]
+
+        if prefix in ("joint2", "ah_joint2"):
+            q0 = 0.0
+        else:
+            q0 = signed_abduction_angle(v_prox, palm_forward, palm_normal) * 0.80
+
+        q1 = angle_between(v_meta, v_prox) * 1.10
+        q2 = angle_between(v_prox, v_inter) * 1.00
+        q3 = angle_between(v_inter, v_dist) * 1.00
+
+        base_prefix = prefix.removeprefix("ah_")
+        res = {
+            f"{base_prefix}0": q0,
+            f"{base_prefix}1": q1,
+            f"{base_prefix}2": q2,
+            f"{base_prefix}3": q3,
+        }
+        for k in list(res.keys()):
+            res[f"ah_{k}"] = res[k]
+        return res
+
+    def _compute_thumb_joints_right(
+        self,
+        pts: np.ndarray,
+        palm_forward: np.ndarray,
+        palm_transverse: np.ndarray,
+        palm_normal: np.ndarray,
+        fingers_flexion: float = 0.0,
+    ) -> Dict[str, float]:
+        """Computes 4 thumb joint angles for RIGHT Hand (exact verified kinematics)."""
+        cmc_idx, mcp_idx, ip_idx, tip_idx = THUMB_INDICES
+        hand_size = np.linalg.norm(palm_forward) + 1e-6
+        u_fwd = palm_forward / hand_size
+        u_norm = palm_normal / (np.linalg.norm(palm_normal) + 1e-6)
+        u_trans = palm_transverse / (np.linalg.norm(palm_transverse) + 1e-6)
+
+        v_thumb_prox = pts[mcp_idx] - pts[cmc_idx]
+        v_thumb_mid = pts[ip_idx] - pts[mcp_idx]
+        v_thumb_dist = pts[tip_idx] - pts[ip_idx]
+        v_thumb_ray = pts[tip_idx] - pts[cmc_idx]
+        u_thumb_ray = v_thumb_ray / (np.linalg.norm(v_thumb_ray) + 1e-6)
+
+        proj_norm = np.dot(u_thumb_ray, u_norm)
+        proj_lat = np.dot(u_thumb_ray, -u_trans)
+        opp_angle = np.arctan2(proj_norm, proj_lat)
+        q00_raw = float(np.interp(opp_angle, [-0.2, 1.3], [0.15, 1.35]))
+        q01_raw = float(np.interp(proj_norm, [-0.2, 0.5], [0.10, -0.65]))
+
+        q02_bone = angle_between(v_thumb_prox, v_thumb_mid)
+        q03_bone = angle_between(v_thumb_mid, v_thumb_dist)
+
+        palm_center = (pts[0] + pts[5] + pts[17]) / 3.0
+        d_palm = np.linalg.norm(pts[tip_idx] - palm_center) / hand_size
+        curl_factor = float(np.clip(1.0 - (d_palm - 0.28) / (0.70 - 0.28), 0.0, 1.0))
+        fist_factor = float(np.clip((fingers_flexion - 0.35) / (1.1 - 0.35), 0.0, 1.0))
+        close_factor = max(curl_factor, fist_factor)
+
+        q00 = max(q00_raw, 0.30 + close_factor * 1.15)
+        q01 = min(q01_raw, 0.05 - close_factor * 1.30)
+        q02 = q02_bone * 1.10 + close_factor * 0.55
+        q03 = q03_bone * 1.10 + close_factor * 0.70
+
+        d_pinch_index = np.linalg.norm(pts[4] - pts[8]) / hand_size
+        d_pinch_middle = np.linalg.norm(pts[4] - pts[12]) / hand_size
+        d_pinch = min(d_pinch_index, d_pinch_middle)
+        pinch_factor = float(np.clip(1.0 - (d_pinch - 0.12) / (0.38 - 0.12), 0.0, 1.0))
+
+        if pinch_factor > 0 and close_factor < 0.6:
+            q00 = (1.0 - pinch_factor * 0.75) * q00 + (pinch_factor * 0.75) * 1.20
+            q01 = (1.0 - pinch_factor * 0.75) * q01 + (pinch_factor * 0.75) * (-0.55)
+            q02 = max(q02, pinch_factor * 0.65)
+            q03 = max(q03, pinch_factor * 0.85)
+
+        res = {
+            "joint00": float(q00),
+            "joint01": float(q01),
+            "joint02": float(q02),
+            "joint03": float(q03),
+            "ah_joint00": float(q00),
+            "ah_joint01": float(q01),
+            "ah_joint02": float(q02),
+            "ah_joint03": float(q03),
+        }
+        return res
+
+    def _retarget_right_hand(self, pts: np.ndarray) -> np.ndarray:
+        """Full retargeting pipeline for RIGHT Hand using JOINT_LIMITS_RIGHT."""
+        palm_forward = pts[9] - pts[WRIST]
+        palm_transverse = pts[17] - pts[5]
+        palm_normal = np.cross(palm_transverse, palm_forward)
+
+        q_dict: Dict[str, float] = {}
+        q_dict.update(self._compute_finger_joints_right(pts, INDEX_INDICES, "joint1", palm_forward, palm_normal))
+        q_dict.update(self._compute_finger_joints_right(pts, MIDDLE_INDICES, "joint2", palm_forward, palm_normal))
+        q_dict.update(self._compute_finger_joints_right(pts, RING_INDICES, "joint3", palm_forward, palm_normal))
+        q_dict.update(self._compute_finger_joints_right(pts, PINKY_INDICES, "joint4", palm_forward, palm_normal))
+
+        fingers_flexion = float((q_dict["joint11"] + q_dict["joint21"] + q_dict["joint31"] + q_dict["joint41"]) / 4.0)
+        q_dict.update(self._compute_thumb_joints_right(pts, palm_forward, palm_transverse, palm_normal, fingers_flexion))
+
+        from safety_utils_v6 import JOINT_LIMITS_RIGHT
+        target_angles = np.zeros(N_JOINTS, dtype=np.float64)
+        for i, joint_name in enumerate(CONTROLLER_JOINT_ORDER):
+            raw_val = q_dict[joint_name]
+            min_lim, max_lim = JOINT_LIMITS_RIGHT[joint_name]
+            target_angles[i] = np.clip(raw_val, min_lim, max_lim)
+        return target_angles
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ─── LEFT HAND PIPELINE (Dedicated Left HW Kinematics & Amplified Elev) ────
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _compute_finger_joints_left(
         self,
         pts: np.ndarray,
         indices: Tuple[int, int, int, int],
@@ -198,56 +340,40 @@ class KinematicRetargetingNode(Node):
         palm_normal: np.ndarray,
     ) -> Dict[str, float]:
         """
-        Computes 4 joint angles (abduction, MCP, PIP, DIP) for a finger (Index, Middle, Ring, Pinky).
-        Applies anatomical DIP-PIP coupling to stabilize fingertip orientation.
+        Computes 4 joint angles for LEFT Hand fingers (Index, Middle, Ring, Pinky).
+        With palm_normal = cross(palm_forward, palm_transverse):
+          - Index outward abduction gives NEGATIVE angle, matching Left Index limit (-1.309, 0.384).
+          - Ring & Pinky outward abduction give POSITIVE angle, matching Left Ring/Pinky limit (-0.4, 1.309).
+          - NO sign inversion applied, ensuring natural outward finger spreading.
         """
         mcp_idx, pip_idx, dip_idx, tip_idx = indices
+        v_meta = pts[mcp_idx] - pts[WRIST]
+        v_prox = pts[pip_idx] - pts[mcp_idx]
+        v_inter = pts[dip_idx] - pts[pip_idx]
+        v_dist = pts[tip_idx] - pts[dip_idx]
 
-        # Bone vectors
-        v_meta = pts[mcp_idx] - pts[WRIST]      # Wrist -> MCP
-        v_prox = pts[pip_idx] - pts[mcp_idx]    # MCP -> PIP
-        v_inter = pts[dip_idx] - pts[pip_idx]   # PIP -> DIP
-        v_dist = pts[tip_idx] - pts[dip_idx]    # DIP -> TIP
-
-        # Joint 0: Abduction/Adduction
-        if prefix in ("joint2", "ah_joint2"):  # Middle finger is reference axis
+        if prefix in ("joint2", "ah_joint2"):
             q0 = 0.0
         else:
-            q0 = signed_abduction_angle(v_prox, palm_forward, palm_normal)
-            abduction_gain = 1.45
-            if self.hand_side == "left":
-                # Invert for Left Hand so human finger spreading spreads robot fingers outward (away from middle)
-                q0 = -q0 * abduction_gain
-            else:
-                q0 = q0 * abduction_gain
+            q0 = signed_abduction_angle(v_prox, palm_forward, palm_normal) * 1.35
 
-        # Joint 1: MCP Flexion
-        q1 = angle_between(v_meta, v_prox)
-
-        # Joint 2: PIP Flexion
-        q2 = angle_between(v_prox, v_inter)
-
-        # Joint 3: DIP Flexion (blend with coupled PIP)
+        q1 = angle_between(v_meta, v_prox) * 1.10
+        q2 = angle_between(v_prox, v_inter) * 1.05
         q3_raw = angle_between(v_inter, v_dist)
-        q3_coupled = (1.0 - self.w_couple) * q3_raw + self.w_couple * (q2 * self.couple_ratio)
-
-        # Apply calibration / sensitivity gains
-        q1_scaled = q1 * 1.10
-        q2_scaled = q2 * 1.05
-        q3_scaled = q3_coupled * 1.10
+        q3 = ((1.0 - self.w_couple) * q3_raw + self.w_couple * (q2 * self.couple_ratio)) * 1.10
 
         base_prefix = prefix.removeprefix("ah_")
         res = {
             f"{base_prefix}0": q0,
-            f"{base_prefix}1": q1_scaled,
-            f"{base_prefix}2": q2_scaled,
-            f"{base_prefix}3": q3_scaled,
+            f"{base_prefix}1": q1,
+            f"{base_prefix}2": q2,
+            f"{base_prefix}3": q3,
         }
         for k in list(res.keys()):
             res[f"ah_{k}"] = res[k]
         return res
 
-    def _compute_thumb_joints(
+    def _compute_thumb_joints_left(
         self,
         pts: np.ndarray,
         palm_forward: np.ndarray,
@@ -256,91 +382,74 @@ class KinematicRetargetingNode(Node):
         fingers_flexion: float = 0.0,
     ) -> Dict[str, float]:
         """
-        Computes 4 joint angles for the Thumb (joint00~03) using tuned adaptive kinematics:
-        - joint00: Base Opposition across palm (+0.05 rad open ~ +1.40 rad opposed)
-        - joint01: Upward Elevation along index (+0.10 rad flat ~ +0.75 rad raised UP)
-        - joint02: MCP Flexion (scaled for natural forward curling)
-        - joint03: IP Flexion (scaled for natural tip curl)
-        - Dynamic Pinch Synergy: Active only during pinch gestures.
-        - Natural Fist Synergy: Engages only when 4 fingers are deeply clenched.
+        Computes 4 joint angles for LEFT Hand Thumb:
+        - Opposition across palm (joint00): Negative commands rotate inward on physical Left Hand.
+        - Elevation along index (joint01): Negative commands rotate UPWARD along index.
+          Enhanced upward elevation reach up to 1.50 rad (~86 deg).
         """
         cmc_idx, mcp_idx, ip_idx, tip_idx = THUMB_INDICES
-
         hand_size = np.linalg.norm(palm_forward) + 1e-6
         u_fwd = palm_forward / hand_size
         u_norm = palm_normal / (np.linalg.norm(palm_normal) + 1e-6)
         u_trans = palm_transverse / (np.linalg.norm(palm_transverse) + 1e-6)
 
-        # Thumb bone vectors
         v_thumb_prox = pts[mcp_idx] - pts[cmc_idx]
         v_thumb_mid = pts[ip_idx] - pts[mcp_idx]
         v_thumb_dist = pts[tip_idx] - pts[ip_idx]
         v_thumb_ray = pts[tip_idx] - pts[cmc_idx]
         u_thumb_ray = v_thumb_ray / (np.linalg.norm(v_thumb_ray) + 1e-6)
 
-        # 1. Base Opposition (joint00):
-        # Rotation out of lateral hand plane towards palm normal & index
+        # 1. Base Opposition (joint00)
         proj_norm = np.dot(u_thumb_ray, u_norm)
-        proj_lat = np.dot(u_thumb_ray, -u_trans)
+        # On Left hand, thumb is towards +u_trans (lateral), so spreading open is +u_trans
+        proj_lat = np.dot(u_thumb_ray, u_trans)
         opp_angle = np.arctan2(proj_norm, proj_lat)
-        # Full dynamic sweep from spread open to deep opposition
-        q00 = float(np.interp(opp_angle, [-0.25, 1.10], [0.05, 1.40]))
+        q00 = float(np.interp(opp_angle, [-0.25, 1.10], [LEFT_THUMB_CONFIG["j00_min"], LEFT_THUMB_CONFIG["j00_max"]]))
 
-        # 2. Base Elevation / Upward Swing (joint01):
-        # 2. Base Elevation / Upward Swing (joint01):
-        # proj_fwd: measures thumb pointing UPWARD along index/middle fingers (range 0.05 ~ 0.85)
+        # 2. Base Elevation / Upward Swing (joint01)
+        # proj_fwd measures pointing UPWARD along index/middle fingers
         proj_fwd = float(np.dot(u_thumb_ray, u_fwd))
-        # Highly sensitive upward elevation detector
-        elev_up = float(np.clip((proj_fwd - 0.05) / 0.45, 0.0, 1.0))
+        elev_up = float(np.clip((proj_fwd - 0.00) / 0.40, 0.0, 1.0))
 
-        # Right hand: upward is positive (+0.12 ~ +0.50), flexion is negative (-0.10 ~ -0.75)
-        q01_right = float(np.interp(proj_norm, [-0.15, 0.40], [0.12 + elev_up * 0.45, -0.75]))
-        # Left hand: upward elevation strongly reaches up to +1.25 rad (~72 deg)
-        q01_left = float(np.interp(proj_norm, [-0.15, 0.40], [0.20 + elev_up * 1.05, 0.70 + elev_up * 0.45]))
+        # Dynamic elevation reaching up to j01_elev_max (1.50 rad ~ 86 deg)
+        q01_mag = float(np.interp(proj_norm, [-0.15, 0.40], [
+            LEFT_THUMB_CONFIG["j01_flat"] + elev_up * (LEFT_THUMB_CONFIG["j01_elev_max"] - LEFT_THUMB_CONFIG["j01_flat"]),
+            0.70 + elev_up * 0.50
+        ]))
 
-        # 3. Flexion angles (joint02, joint03) with tuned scales from v6_tuning & v6_adaptive
+        # 3. Flexion angles (joint02, joint03)
         q02_bone = angle_between(v_thumb_prox, v_thumb_mid)
         q03_bone = angle_between(v_thumb_mid, v_thumb_dist)
+        q02 = q02_bone * LEFT_THUMB_CONFIG["j02_scale"]
+        q03 = q03_bone * LEFT_THUMB_CONFIG["j03_scale"]
 
-        # Sensitivity gains (boosts natural subtle thumb bending)
-        q02 = q02_bone * 1.50
-        q03 = q03_bone * 2.10
-
-        # 4. Dynamic Pinch Synergy:
+        # 4. Pinch Synergy
         d_pinch_index = np.linalg.norm(pts[4] - pts[8]) / hand_size
         d_pinch_middle = np.linalg.norm(pts[4] - pts[12]) / hand_size
         d_pinch = min(d_pinch_index, d_pinch_middle)
         pinch_factor = float(np.clip(1.0 - (d_pinch - 0.10) / (0.35 - 0.10), 0.0, 1.0))
 
         if pinch_factor > 0:
-            q00 = (1.0 - pinch_factor * 0.70) * q00 + (pinch_factor * 0.70) * 1.25
-            q01_right = (1.0 - pinch_factor * 0.70) * q01_right + (pinch_factor * 0.70) * (-0.55)
-            q01_left = (1.0 - pinch_factor * 0.70) * q01_left + (pinch_factor * 0.70) * 0.75
-            q02 = max(q02, pinch_factor * 0.50)
-            q03 = max(q03, pinch_factor * 0.70)
+            q00 = (1.0 - pinch_factor * 0.70) * q00 + (pinch_factor * 0.70) * LEFT_THUMB_CONFIG["j00_pinch"]
+            q01_mag = (1.0 - pinch_factor * 0.70) * q01_mag + (pinch_factor * 0.70) * LEFT_THUMB_CONFIG["j01_pinch"]
+            q02 = max(q02, pinch_factor * LEFT_THUMB_CONFIG["j02_pinch"])
+            q03 = max(q03, pinch_factor * LEFT_THUMB_CONFIG["j03_pinch"])
 
-        # 5. Full Fist / Grasp Coupling:
+        # 5. Full Fist / Grasp
         palm_center = (pts[0] + pts[5] + pts[17]) / 3.0
         d_palm = np.linalg.norm(pts[tip_idx] - palm_center) / hand_size
         if fingers_flexion > 0.90 and d_palm < 0.45:
             fist_w = float(np.clip((fingers_flexion - 0.90) / 0.35, 0.0, 1.0) * np.clip((0.45 - d_palm) / 0.15, 0.0, 1.0))
             q00 = (1.0 - fist_w) * q00 + fist_w * 1.45
-            q01_right = (1.0 - fist_w) * q01_right + fist_w * (-1.15)
-            q01_left = (1.0 - fist_w) * q01_left + fist_w * 0.45
+            q01_mag = (1.0 - fist_w) * q01_mag + fist_w * LEFT_THUMB_CONFIG["j01_fist"]
             q02 = max(q02, fist_w * 0.80)
             q03 = max(q03, fist_w * 1.00)
 
-        if self.hand_side == "left":
-            c = LEFT_THUMB_CALIB
-            q00_out = c["j00_sign"] * float(q00)
-            q01_out = c["j01_sign"] * float(q01_left)
-            q02_out = c["j02_sign"] * float(q02)
-            q03_out = c["j03_sign"] * float(q03)
-        else:
-            q00_out = float(q00)
-            q01_out = float(q01_right)
-            q02_out = float(q02)
-            q03_out = float(q03)
+        c = LEFT_THUMB_CONFIG
+        q00_out = c["j00_sign"] * float(q00)
+        q01_out = c["j01_sign"] * float(q01_mag)
+        q02_out = c["j02_sign"] * float(q02)
+        q03_out = c["j03_sign"] * float(q03)
 
         res = {
             "joint00": q00_out,
@@ -354,38 +463,40 @@ class KinematicRetargetingNode(Node):
         }
         return res
 
-    def retarget_landmarks(self, landmarks_flat: List[float]) -> np.ndarray:
-        """
-        Converts 63-dim flat landmark array into 20-dim target joint angles for Allegro Hand V6.
-        """
-        pts = np.array(landmarks_flat, dtype=np.float64).reshape((21, 3))
-
+    def _retarget_left_hand(self, pts: np.ndarray) -> np.ndarray:
+        """Full retargeting pipeline for LEFT Hand using JOINT_LIMITS_LEFT."""
         palm_forward = pts[9] - pts[WRIST]
         palm_transverse = pts[17] - pts[5]
-        if self.hand_side == "left":
-            palm_normal = np.cross(palm_forward, palm_transverse)
-        else:
-            palm_normal = np.cross(palm_transverse, palm_forward)
+        palm_normal = np.cross(palm_forward, palm_transverse)
 
         q_dict: Dict[str, float] = {}
+        q_dict.update(self._compute_finger_joints_left(pts, INDEX_INDICES, "joint1", palm_forward, palm_normal))
+        q_dict.update(self._compute_finger_joints_left(pts, MIDDLE_INDICES, "joint2", palm_forward, palm_normal))
+        q_dict.update(self._compute_finger_joints_left(pts, RING_INDICES, "joint3", palm_forward, palm_normal))
+        q_dict.update(self._compute_finger_joints_left(pts, PINKY_INDICES, "joint4", palm_forward, palm_normal))
 
-        # 1. Compute 4 fingers (Index, Middle, Ring, Pinky) first
-        q_dict.update(self._compute_finger_joints(pts, INDEX_INDICES, "joint1", palm_forward, palm_normal))
-        q_dict.update(self._compute_finger_joints(pts, MIDDLE_INDICES, "joint2", palm_forward, palm_normal))
-        q_dict.update(self._compute_finger_joints(pts, RING_INDICES, "joint3", palm_forward, palm_normal))
-        q_dict.update(self._compute_finger_joints(pts, PINKY_INDICES, "joint4", palm_forward, palm_normal))
-
-        # 2. Real fingers MCP flexion average across 4 fingers
         fingers_flexion = float((q_dict["joint11"] + q_dict["joint21"] + q_dict["joint31"] + q_dict["joint41"]) / 4.0)
+        q_dict.update(self._compute_thumb_joints_left(pts, palm_forward, palm_transverse, palm_normal, fingers_flexion))
 
-        # 3. Compute Thumb (joint00~03)
-        q_dict.update(self._compute_thumb_joints(pts, palm_forward, palm_transverse, palm_normal, fingers_flexion))
-
+        from safety_utils_v6 import JOINT_LIMITS_LEFT
         target_angles = np.zeros(N_JOINTS, dtype=np.float64)
         for i, joint_name in enumerate(CONTROLLER_JOINT_ORDER):
             raw_val = q_dict[joint_name]
-            min_lim, max_lim = JOINT_LIMITS[joint_name]
+            min_lim, max_lim = JOINT_LIMITS_LEFT[joint_name]
             target_angles[i] = np.clip(raw_val, min_lim, max_lim)
+        return target_angles
+
+    def retarget_landmarks(self, landmarks_flat: List[float]) -> np.ndarray:
+        """
+        Converts 63-dim flat landmark array into 20-dim target joint angles for Allegro Hand V6.
+        Delegates to independent _retarget_right_hand or _retarget_left_hand based on active model.
+        """
+        pts = np.array(landmarks_flat, dtype=np.float64).reshape((21, 3))
+
+        if self.hand_side == "right":
+            target_angles = self._retarget_right_hand(pts)
+        else:
+            target_angles = self._retarget_left_hand(pts)
 
         # Apply EMA Low-Pass Filter
         if self._filtered_q is None:
