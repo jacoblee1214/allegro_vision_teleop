@@ -186,11 +186,11 @@ class KinematicRetargetingNode(Node):
         else:
             q0 = signed_abduction_angle(v_prox, palm_forward, palm_normal)
             if prefix in ("joint1", "ah_joint1"):
-                q0 = q0 * 0.80
+                q0 = q0 * 1.45
             elif prefix in ("joint3", "ah_joint3"):
-                q0 = q0 * 0.80
+                q0 = q0 * 1.45
             elif prefix in ("joint4", "ah_joint4"):
-                q0 = q0 * 0.80
+                q0 = q0 * 1.45
 
         # Joint 1: MCP Flexion
         q1 = angle_between(v_meta, v_prox)
@@ -228,12 +228,12 @@ class KinematicRetargetingNode(Node):
     ) -> Dict[str, float]:
         """
         Computes 4 joint angles for the Thumb (joint00~03) using tuned adaptive kinematics:
-        - joint00: Base Abduction / Opposition (0.05 rad open ~ 1.40 rad opposed across palm)
-        - joint01: Elevation / Inward Swing (+0.12 rad extended ~ -0.75 rad inward towards palm)
-        - joint02: MCP Flexion (scaled with v6_adaptive/v6_tuning gains for high fidelity)
+        - joint00: Base Opposition across palm (+0.05 rad open ~ +1.40 rad opposed)
+        - joint01: Upward Elevation along index (+0.10 rad flat ~ +0.75 rad raised UP)
+        - joint02: MCP Flexion (scaled for natural forward curling)
         - joint03: IP Flexion (scaled for natural tip curl)
-        - Dynamic Pinch Synergy: Active only during pinch gestures without locking free motion.
-        - Natural Fist Synergy: Engages only when 4 fingers are deeply clenched (flexion > 0.9 rad).
+        - Dynamic Pinch Synergy: Active only during pinch gestures.
+        - Natural Fist Synergy: Engages only when 4 fingers are deeply clenched.
         """
         cmc_idx, mcp_idx, ip_idx, tip_idx = THUMB_INDICES
 
@@ -250,16 +250,22 @@ class KinematicRetargetingNode(Node):
         u_thumb_ray = v_thumb_ray / (np.linalg.norm(v_thumb_ray) + 1e-6)
 
         # 1. Base Opposition (joint00):
-        # Rotation out of the lateral hand plane towards palm normal & index
+        # Rotation out of lateral hand plane towards palm normal & index
         proj_norm = np.dot(u_thumb_ray, u_norm)
         proj_lat = np.dot(u_thumb_ray, -u_trans)
         opp_angle = np.arctan2(proj_norm, proj_lat)
         # Full dynamic sweep from spread open to deep opposition
         q00 = float(np.interp(opp_angle, [-0.25, 1.10], [0.05, 1.40]))
 
-        # 2. Base Elevation / Inward Swing (joint01):
-        # Outward when open (+0.12 rad), inward across palm when flexed (-0.75 rad)
-        q01 = float(np.interp(proj_norm, [-0.15, 0.40], [0.12, -0.75]))
+        # 2. Base Elevation / Upward Swing (joint01):
+        # proj_fwd: measures thumb pointing UPWARD along index/middle fingers
+        proj_fwd = float(np.dot(u_thumb_ray, u_fwd))
+        elev_up = float(np.clip((proj_fwd - 0.20) / 0.55, 0.0, 1.0))
+
+        # Right hand: upward is positive (+0.12 ~ +0.50), flexion is negative (-0.10 ~ -0.75)
+        q01_right = float(np.interp(proj_norm, [-0.15, 0.40], [0.12 + elev_up * 0.38, -0.75]))
+        # Left hand (axis [0, 0, -1]): upward elevation is POSITIVE (+0.10 ~ +0.75 rad)
+        q01_left = float(np.interp(proj_norm, [-0.15, 0.40], [0.10 + elev_up * 0.65, 0.60]))
 
         # 3. Flexion angles (joint02, joint03) with tuned scales from v6_tuning & v6_adaptive
         q02_bone = angle_between(v_thumb_prox, v_thumb_mid)
@@ -270,7 +276,6 @@ class KinematicRetargetingNode(Node):
         q03 = q03_bone * 2.10
 
         # 4. Dynamic Pinch Synergy:
-        # Distance from thumb tip (4) to index tip (8) and middle tip (12)
         d_pinch_index = np.linalg.norm(pts[4] - pts[8]) / hand_size
         d_pinch_middle = np.linalg.norm(pts[4] - pts[12]) / hand_size
         d_pinch = min(d_pinch_index, d_pinch_middle)
@@ -278,34 +283,30 @@ class KinematicRetargetingNode(Node):
 
         if pinch_factor > 0:
             q00 = (1.0 - pinch_factor * 0.70) * q00 + (pinch_factor * 0.70) * 1.25
-            q01 = (1.0 - pinch_factor * 0.70) * q01 + (pinch_factor * 0.70) * (-0.55)
+            q01_right = (1.0 - pinch_factor * 0.70) * q01_right + (pinch_factor * 0.70) * (-0.55)
+            q01_left = (1.0 - pinch_factor * 0.70) * q01_left + (pinch_factor * 0.70) * 0.55
             q02 = max(q02, pinch_factor * 0.50)
             q03 = max(q03, pinch_factor * 0.70)
 
         # 5. Full Fist / Grasp Coupling:
-        # ONLY activate when 4 fingers are actually folded (flexion > 0.90 rad) AND thumb is near palm center
         palm_center = (pts[0] + pts[5] + pts[17]) / 3.0
         d_palm = np.linalg.norm(pts[tip_idx] - palm_center) / hand_size
         if fingers_flexion > 0.90 and d_palm < 0.45:
             fist_w = float(np.clip((fingers_flexion - 0.90) / 0.35, 0.0, 1.0) * np.clip((0.45 - d_palm) / 0.15, 0.0, 1.0))
             q00 = (1.0 - fist_w) * q00 + fist_w * 1.45
-            q01 = (1.0 - fist_w) * q01 + fist_w * (-1.15)
+            q01_right = (1.0 - fist_w) * q01_right + fist_w * (-1.15)
+            q01_left = (1.0 - fist_w) * q01_left + fist_w * 0.35
             q02 = max(q02, fist_w * 0.80)
             q03 = max(q03, fist_w * 1.00)
 
         if self.hand_side == "left":
-            # Left Hand URDF:
-            # - joint00 (Opposition): Rotates across palm into front plane towards index (+0.05 ~ +1.40 rad)
-            # - joint01 (Inward Swing): Swings into palm towards index (+0.12 open ~ -0.75 flexed)
-            # - joint02 (MCP Flexion): Curls forward (+0.0 ~ +1.20 rad)
-            # - joint03 (IP Curl): Curls forward (+0.0 ~ +1.30 rad)
-            q00_out = float(q00)   # Opposition rotates across palm towards index
-            q01_out = float(q01)   # Inward swing towards fingers
-            q02_out = float(q02)   # MCP flexion curls forward
-            q03_out = float(q03)   # IP tip curl curls forward
+            q00_out = float(q00)       # Base opposition rotates across palm towards index (+0.05 ~ +1.45 rad)
+            q01_out = float(q01_left)  # Second joint upward elevation & forward swing (+0.10 ~ +0.75 rad)
+            q02_out = float(q02)       # MCP flexion curls forward (+0.0 ~ +1.20 rad)
+            q03_out = float(q03)       # IP tip curl curls forward (+0.0 ~ +1.30 rad)
         else:
             q00_out = float(q00)
-            q01_out = float(q01)
+            q01_out = float(q01_right)
             q02_out = float(q02)
             q03_out = float(q03)
 

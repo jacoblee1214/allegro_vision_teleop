@@ -33,7 +33,7 @@ JOINT_LIMITS: dict[str, tuple[float, float]] = {
     "joint02": (-1.400,  1.400),
     "joint03": (-1.400,  1.400),
     # Index (joint10~13): joint10=abduction, joint11=MCP flexion, joint12=PIP, joint13=DIP
-    "joint10": (-0.384,  1.309),
+    "joint10": (-1.309,  1.309),
     "joint11": (-0.070,  1.571),
     "joint12": (-0.175,  1.396),
     "joint13": (-0.175,  1.396),
@@ -43,12 +43,12 @@ JOINT_LIMITS: dict[str, tuple[float, float]] = {
     "joint22": (-0.175,  1.396),
     "joint23": (-0.175,  1.396),
     # Ring (joint30~33)
-    "joint30": (-1.309,  0.384),
+    "joint30": (-1.309,  1.309),
     "joint31": (-0.070,  1.571),
     "joint32": (-0.175,  1.396),
     "joint33": (-0.175,  1.396),
     # Pinky (joint40~43)
-    "joint40": (-1.309,  0.436),
+    "joint40": (-1.309,  1.309),
     "joint41": (-0.070,  1.571),
     "joint42": (-0.175,  1.396),
     "joint43": (-0.175,  1.396),
