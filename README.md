@@ -215,33 +215,51 @@ docker exec -it ros_humble_dev bash -c "
 
 ## 🚀 실행 가이드 (Quick Start)
 
-어디서든 간편하게 실행할 수 있도록 올인원 단축 런처가 홈 디렉토리 및 시스템 명령어(`run_v6`)로 등록되어 있습니다.
+어디서든 간편하게 실행할 수 있도록 용도별 전용 런처 스크립트와 올인원 런처(`run_v6`)를 모두 제공합니다. 이전 버전(클래식 대시보드 + RViz2)과 신규 버전(단일 창 통합 3D 콕핏)을 필요에 따라 언제든 돌려가며 사용할 수 있습니다.
 
 > [!TIP]
-> ### ⚡ 실행 방법 (상황별 최적 명령어 안내)
+> ### ⚡ 실행 방법 요약 (어떤 GUI를 쓸지 선택하여 1초 실행)
 >
-> **방법 1. 평소 쓰시던 기존 실행 명령어 (100% 동일 지원)**
+> **1. 🖥️ [신규] 통합 3D 콕핏 UI (단일 윈도우 - 창 1개로 완결)**
+> - 카메라 영상 옆에 실시간 3D 로봇 핸드가 내장되어 있어 별도의 RViz2 창 없이 1개 창으로 편리하게 사용합니다.
 > ```bash
-> docker exec -it -e DISPLAY=$DISPLAY ros_humble_dev run_v6 real --rate 100 --scale 2.0 --alpha 0.18
-> ```
+> # 실물 로봇 연결 시 (하드웨어 및 왼손/오른손 자동 감지)
+> ./run_cockpit.sh real
 >
-> **방법 2. 다른 사람도 누구나 따라하기 쉬운 1초 단축 명령어 (호스트 터미널 어디서든)**
+> # 시뮬레이션 테스트 시 (로봇 없이 가상 3D 손 확인)
+> ./run_cockpit.sh sim
+> ```
+> *(동일 명령어: `run_v6 real --cockpit` 또는 `run_v6 sim --cockpit`)*
+>
+> ---
+>
+> **2. 📊 [클래식] 2D 텔레옵 대시보드 + RViz2 분리 창 모드 (기존 방식)**
+> - 20-DOF 관절별 상세 각도 게이지 바와 공식 RViz2 창이 함께 실행되어 상세 텔레메트리를 모니터링합니다.
 > ```bash
-> # 호스트 터미널에서 폴더 이동 없이 바로 입력:
-> run_v6 real
+> # 실물 로봇 연결 시
+> ./run_dashboard.sh real
 >
-> # 또는 세부 옵션 적용 시:
-> run_v6 real --rate 100 --scale 2.0 --alpha 0.18
->
-> # (대체 명령어: ~/run_v6.sh real)
+> # 시뮬레이션 테스트 시
+> ./run_dashboard.sh sim
 > ```
-> *(호스트 어디서나 `run_v6`만 입력하면 `ros_humble_dev` 컨테이너 감지, GUI 디스플레이 자동 포워딩, 하드웨어 자동 조회가 일괄 실행됩니다.)*
+> *(동일 명령어: `run_v6 real` 또는 `run_v6 real --classic`)*
 >
-> **방법 3. 로봇 없이 카메라만으로 테스트 (가상 3D 시뮬레이션)**
-> ```bash
-> run_v6 sim
-> # 또는 docker exec -it -e DISPLAY=$DISPLAY ros_humble_dev run_v6 sim
-> ```
+> ---
+>
+> **3. 🖐️ 손 모델(Hand Side) 선택 및 자동 감지**
+> - **기본값 (Default)**: **`right` (오른손)**
+> - **자동 감지**: `real` 모드 실행 시 로봇의 Modbus TCP 레지스터(`0x0071`)를 5ms 내에 자동 조회하여, 연결된 로봇이 왼손이면 자동으로 `left`로 전환됩니다.
+> - **수동 지정**: 필요 시 `--hand left` 또는 `--hand right`를 붙여 강제 실행 가능:
+>   ```bash
+>   ./run_cockpit.sh real --hand left
+>   ./run_dashboard.sh real --hand right
+>   ```
+> - **실시간 전환**: GUI 실행 중에도 키보드 **`H`** 키 또는 화면 상단의 **`Switch Hand [H]`** 버튼을 누르면 재시작 없이 즉시 전환됩니다.
+>
+> ---
+>
+> **4. 🌐 스마트 IP 자동 탐색**
+> - 기본 IP `192.168.1.100` 외에도 연구실 내 사용되는 `192.168.1.201` 등을 시작 시 자동 검색하여, 사용자가 `--ip` 옵션을 주지 않아도 연결된 로봇에 자동으로 바인딩됩니다.
 
 ---
 
@@ -250,7 +268,7 @@ docker exec -it ros_humble_dev bash -c "
 
 | 단축키 | 기능 명칭 | 상세 설명 |
 |---|---|---|
-| **`H`** | **손 모드 전환 (Hand Switch)** | **왼손(LEFT) ↔ 오른손(RIGHT)** 기구학 파이프라인 및 RViz 3D 모델 실시간 즉각 전환 |
+| **`H`** | **손 모드 전환 (Hand Switch)** | **왼손(LEFT) ↔ 오른손(RIGHT)** 기구학 파이프라인 및 3D 모델 실시간 즉각 전환 |
 | **`Space`** | **클러치 홀드 (Clutch Hold)** | 작업자가 손을 화면 밖으로 치우거나 쉴 때, **로봇 관절을 현재 위치에 안전하게 고정(Freeze)** |
 | **`R`** | **에피소드 녹화 (Record)** | VLA 로봇 학습용 20-DOF 관절 데이터셋 녹화 시작 및 저장 종료 (`--record` 옵션 시) |
 | **`S`** | **성공 태깅 (Success Tag)** | 조작 태스크 성공 시점에 데이터셋 플래그 태깅 |
@@ -258,34 +276,29 @@ docker exec -it ros_humble_dev bash -c "
 
 ---
 
-### 1. Allegro Hand V6 (5-Finger) 실행 상세
+### 1. Allegro Hand V6 (5-Finger) 세부 실행 옵션
 
-#### ① 실제 하드웨어 로봇 제어 (Real Robot Teleoperation - 실전용)
+#### ① UI 모드별 세부 명령
+- **단일 창 통합 3D 콕핏 (Cockpit)**:
+  ```bash
+  run_v6 real --cockpit --rate 100 --alpha 0.20
+  ```
+- **클래식 대시보드 + RViz2 (Classic)**:
+  ```bash
+  run_v6 real --classic --rate 100 --alpha 0.20
+  ```
+- **미디어파이프 OpenCV 창만 실행 (Simple)**:
+  ```bash
+  run_v6 real --simple-gui
+  ```
+- **헤드리스 (Headless / 백그라운드)**:
+  ```bash
+  run_v6 real --no-gui
+  ```
+
+#### ② VLA 로봇 학습용 데이터셋 동시 수집 모드
 ```bash
-~/run_v6.sh real
-```
-- **완전 자동화 시퀀스**:
-  1. 호스트 실행 감지 시 `ros_humble_dev` 컨테이너 자동 연결 및 X11 GUI 포워딩.
-  2. `192.168.1.100` 네트워크 핑 사전 점검.
-  3. Modbus `0x0071` 레지스터 조회를 통한 왼손/오른손 자동 판별.
-  4. Intel RealSense RGB 카메라(`/dev/video8` 등) 자동 검색 및 60 FPS 연동 (없을 시 웹캠 `/dev/video0` 자동 폴백).
-  5. 100Hz 고주파 지터 억제 루프와 함께 PyQt5 콕핏 대시보드 및 RViz2 3D 뷰어 동시 구동.
-
-> **특정 손 강제 지정 실행 시**:
-> ```bash
-> ~/run_v6.sh real --hand left   # 왼손 강제 구동
-> ~/run_v6.sh real --hand right  # 오른손 강제 구동
-> ```
-
-#### ② 가상 3D 시뮬레이션 (RViz2 Simulation - 로봇 없이 테스트)
-```bash
-~/run_v6.sh sim
-```
-- 실제 로봇 전원을 켜지 않고도 웹캠이나 RealSense로 작업자의 손동작을 3D 가상 로봇 손이 정확하게 추종하는지 즉시 확인할 수 있습니다.
-
-#### ③ VLA 로봇 학습용 데이터셋 동시 수집 모드
-```bash
-~/run_v6.sh real --record
+run_v6 real --record
 ```
 - 카메라 영상, 21개 3D 랜드마크, 20-DOF 관절 지령/현재 위치를 HDF5/NPZ 포맷으로 동기화 기록합니다.
 
@@ -308,15 +321,17 @@ docker exec -it ros_humble_dev bash -c "
 
 | 옵션 | 설명 | 기본값 | 추천 예시 |
 |---|---|---|---|
-| `real` / `sim` / `nodes` | 실행 모드 (물리 하드웨어 / RViz2 시뮬 / 비전 노드 단독) | `nodes` | `~/run_v6.sh real` |
-| `--hand <left\|right>` | 로봇 손 모델 명시 (미지정 시 하드웨어 자동 감지) | `auto` (0x0071) | `--hand left` |
+| `real` / `sim` / `nodes` | 실행 모드 (물리 하드웨어 / RViz2 시뮬 / 비전 노드 단독) | `nodes` | `run_v6 real` |
+| `--cockpit` / `--3d` | 통합 3D 콕핏 UI 실행 (단일 윈도우, RViz 창 불필요) | 선택 가능 | `run_v6 real --cockpit` |
+| `--classic` / `--dashboard` | 클래식 2D 대시보드 + RViz2 분리 창 실행 | 기본 모드 | `run_v6 real --classic` |
+| `--hand <right\|left>` | 로봇 손 모델 명시 (기본: right, 실물 연결 시 자동 감지) | `right` | `--hand left` |
 | `--rate <int>`, `--hz <int>` | 로봇 명령 송출 주기 (Hz) (100Hz 고주파 보간) | `100` | `--rate 100` |
 | `--alpha <float>` | EMA 저주파 필터 계수 (작을수록 부드러움, 권장: 0.18~0.25) | `0.25` | `--alpha 0.18` |
-| `--scale <float>` | 카메라 GUI 화면 배율 (마우스 드래그로도 조절 가능) | `1.75` | `--scale 2.0` |
+| `--scale <float>` | 카메라 GUI 화면 배율 | `1.75` | `--scale 2.0` |
 | `--fps <int>` | 카메라 캡처 목표 프레임레이트 | `60` | `--fps 60` |
 | `--device <int>` | 카메라 디바이스 인덱스 (RealSense 없을 시 0으로 자동 폴백) | `auto` | `--device 0` |
 | `--record` | 20-DOF VLA 로봇 데이터셋 수집 노드 백그라운드 구동 | `false` | `--record` |
-| `--no-gui` | GUI 창 없이 백그라운드(Headless) 실행 | `false` | `--no-gui` |
+| `--no-gui` / `--headless` | GUI 창 없이 백그라운드(Headless) 실행 | `false` | `--no-gui` |
 
 ---
 

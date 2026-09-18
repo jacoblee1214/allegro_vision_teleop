@@ -68,8 +68,8 @@ SCALE="1.75"
 RATE="100"
 FPS="60"
 RECORD_FLAG=false
-USE_DASHBOARD=true
-HAND_SIDE="left"  # Default to 'left' for Left Hand model
+UI_MODE="classic"      # UI Mode: 'cockpit' (embedded 3D), 'classic' (dashboard + RViz), 'simple' (OpenCV only), 'none'
+HAND_SIDE="right"      # Default to 'right' for Right Hand model
 USER_SPECIFIED_HAND=false
 USE_RVIZ=""
 
@@ -122,18 +122,23 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-gui|--headless)
             GUI_FLAG="--no-gui"
+            UI_MODE="none"
             shift
             ;;
         --record)
             RECORD_FLAG=true
             shift
             ;;
-        --simple-gui)
-            USE_DASHBOARD=false
+        --cockpit|--3d)
+            UI_MODE="cockpit"
             shift
             ;;
-        --dashboard|--ui)
-            USE_DASHBOARD=true
+        --classic|--dashboard|--ui)
+            UI_MODE="classic"
+            shift
+            ;;
+        --simple-gui)
+            UI_MODE="simple"
             shift
             ;;
         --rviz)
@@ -145,39 +150,49 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "Usage: ./run_teleop.sh [nodes|sim|real] [--hand left|right] [--ip <ip|end_num>] [--rate 60|100] [--alpha 0.20] [--device 8] [--scale 1.75] [--fps 60] [--descriptor <desc>] [--no-gui]"
+            echo "Usage: ./run_v6.sh [nodes|sim|real] [UI options] [HW options]"
             echo ""
             echo "Modes:"
-            echo "  nodes (default) : Launch vision_tracker, retargeting_node, sim_bridge_node"
-            echo "  sim             : Launch Allegro Hand V6 mock hardware + RViz2 + 3 teleop nodes"
-            echo "  real            : Launch Allegro Hand V6 physical hardware (Modbus TCP/RTU) + 3 teleop nodes"
+            echo "  nodes (default) : Launch vision tracker, retargeting, and bridge nodes"
+            echo "  sim             : Launch Allegro Hand V6 mock hardware + teleop nodes"
+            echo "  real            : Launch Allegro Hand V6 physical hardware (Modbus TCP/RTU) + teleop nodes"
+            echo ""
+            echo "UI Options:"
+            echo "  --cockpit, --3d      : Launch Unified 3D Cockpit UI (Single Window, embedded 3D robot hand)"
+            echo "  --classic            : Launch Classic 2D Teleop Dashboard + RViz2 3D window (Default)"
+            echo "  --dashboard          : Alias for --classic"
+            echo "  --simple-gui         : Launch MediaPipe OpenCV window only"
+            echo "  --no-gui, --headless : Run headless (no GUI windows)"
+            echo "  --rviz / --no-rviz   : Force enable or disable separate RViz2 window"
             echo ""
             echo "Options:"
-            echo "  --hand <left|right>  : Hand side model (default: auto-detected from hardware register 0x0071, or 'left')"
+            echo "  --hand <right|left>  : Hand side model (default: 'right', or auto-detected from hardware register 0x0071)"
             echo "  --ip <str>           : Target robot IP (e.g. 192.168.1.101, 101, or 192.168.1.100)"
-            echo "  --rate, --hz <int>   : Command publishing frequency to robot (default: 100 Hz, e.g. 60 or 100 for tremor suppression)"
+            echo "  --rate, --hz <int>   : Command publishing frequency to robot (default: 100 Hz)"
             echo "  --fps <int>          : Camera capture frame rate (default: 60 FPS)"
             echo "  --alpha <float>      : EMA smoothing factor (default: 0.25, range: 0.05~0.5)"
-            echo "  --device <int>       : Camera device index (default: auto-detect Intel RealSense RGB -> /dev/video8, or fallback to 0)"
-            echo "  --scale <float>      : Camera GUI display scale (default: 1.75 -> 1120x840, resizable)"
+            echo "  --device <int>       : Camera device index (default: auto-detect Intel RealSense RGB -> /dev/video8, or 0)"
+            echo "  --scale <float>      : Camera GUI display scale (default: 1.75)"
             echo "  --descriptor <str>   : Hardware descriptor (default: modbus_tcp:192.168.1.100:502)"
-            echo "  --record             : Launch VLA dataset recorder node (auto-records episodes on 'R' and tags on 'S')"
-            echo "  --no-gui             : Disable OpenCV debug window"
+            echo "  --record             : Launch VLA dataset recorder node"
             exit 0
             ;;
         *)
             echo "Unknown argument: $1"
-            echo "Run './run_teleop.sh --help' for usage."
+            echo "Run './run_v6.sh --help' for usage."
             exit 1
             ;;
     esac
 done
 
+# Configure RViz default based on UI Mode if not explicitly overridden
 if [ -z "$USE_RVIZ" ]; then
-    if [ "$USE_DASHBOARD" = true ] && [ -z "$GUI_FLAG" ]; then
-        USE_RVIZ="false"
+    if [ "$UI_MODE" = "cockpit" ]; then
+        USE_RVIZ="false"   # Cockpit has embedded 3D robot hand widget
+    elif [ "$UI_MODE" = "classic" ] || [ "$UI_MODE" = "simple" ]; then
+        USE_RVIZ="true"    # Classic dashboard / simple GUI uses separate RViz2 window
     else
-        USE_RVIZ="true"
+        USE_RVIZ="false"
     fi
 fi
 
@@ -251,8 +266,9 @@ echo " Alpha      : $ALPHA"
 echo " Camera     : $CAM_DESC (Capture: ${FPS} FPS)"
 echo " Descriptor : $DESCRIPTOR"
 echo " Scale      : ${SCALE}x"
-echo " GUI        : $([ -n "$GUI_FLAG" ] && echo "Disabled (Headless)" || echo "Enabled")"
-echo " 3D Hand    : $([ "$USE_RVIZ" = true ] && echo "Separate RViz2 Window" || echo "Embedded in Cockpit UI (Single Window)")"
+echo " Hand Side  : ${HAND_SIDE^^} Hand (default/detected)"
+echo " UI Mode    : $UI_MODE ($([ "$UI_MODE" = "cockpit" ] && echo "Unified 3D Cockpit" || ([ "$UI_MODE" = "classic" ] && echo "Classic Dashboard" || echo "$UI_MODE")))"
+echo " RViz2      : $([ "$USE_RVIZ" = true ] && echo "Enabled (Separate Window)" || echo "Disabled")"
 echo " Dir        : $SCRIPT_DIR"
 echo "========================================================"
 
@@ -297,6 +313,28 @@ case "$MODE" in
                 ip link set "$iface" up 2>/dev/null || true
             fi
         done
+
+        # If user did not explicitly specify an IP, auto-scan known IP candidates (201, 100, 101)
+        if [ -z "$USER_IP" ] && [[ "$DESCRIPTOR" =~ modbus_tcp:192.168.1.100:502 ]]; then
+            FOUND_IP=$(python3 -c "
+import socket
+for ip in ['192.168.1.201', '192.168.1.100', '192.168.1.101']:
+    try:
+        s = socket.socket()
+        s.settimeout(0.2)
+        if s.connect_ex((ip, 502)) == 0:
+            print(ip)
+            s.close()
+            break
+        s.close()
+    except Exception:
+        pass
+" 2>/dev/null || true)
+            if [ -n "$FOUND_IP" ]; then
+                DESCRIPTOR="modbus_tcp:${FOUND_IP}:502"
+                echo "[✓] Auto-discovered Allegro Hand at ${FOUND_IP}:502"
+            fi
+        fi
 
         if [[ "$DESCRIPTOR" =~ modbus_tcp:([0-9.]+):([0-9]+) ]]; then
             TARGET_IP="${BASH_REMATCH[1]}"
@@ -364,15 +402,28 @@ python3 "$SCRIPT_DIR/sim_bridge_node_v6.py" --rate "$RATE" --alpha "$ALPHA" &
 PIDS+=($!)
 sleep 0.5
 
-if [ "$USE_DASHBOARD" = true ] && [ -z "$GUI_FLAG" ]; then
-    echo "[+] Starting Unified Teleoperation Cockpit Dashboard (V6, PyQt5 @ ${FPS} FPS, hand: $HAND_SIDE)..."
-    python3 "$SCRIPT_DIR/teleop_dashboard_v6.py" --device "$DEVICE" --fps "$FPS" --hand "$HAND_SIDE" &
-    PIDS+=($!)
-else
-    echo "[+] Starting MediaPipe Vision Tracker Node (V6, $CAM_DESC, ${SCALE}x scale, ${FPS} FPS)..."
-    python3 "$SCRIPT_DIR/vision_tracker_v6.py" --device "$DEVICE" --scale "$SCALE" --fps "$FPS" $GUI_FLAG &
-    PIDS+=($!)
-fi
+case "$UI_MODE" in
+    cockpit)
+        echo "[+] Starting Unified 3D Cockpit Dashboard (V6, PyQt5 with Embedded 3D Hand @ ${FPS} FPS, hand: $HAND_SIDE)..."
+        python3 "$SCRIPT_DIR/teleop_cockpit_v6.py" --device "$DEVICE" --fps "$FPS" --hand "$HAND_SIDE" &
+        PIDS+=($!)
+        ;;
+    classic)
+        echo "[+] Starting Classic 2D Teleop Dashboard (V6, PyQt5 Gauge UI @ ${FPS} FPS, hand: $HAND_SIDE)..."
+        python3 "$SCRIPT_DIR/teleop_dashboard_v6.py" --device "$DEVICE" --fps "$FPS" --hand "$HAND_SIDE" &
+        PIDS+=($!)
+        ;;
+    simple)
+        echo "[+] Starting MediaPipe Vision Tracker Node (V6, $CAM_DESC, ${SCALE}x scale, ${FPS} FPS)..."
+        python3 "$SCRIPT_DIR/vision_tracker_v6.py" --device "$DEVICE" --scale "$SCALE" --fps "$FPS" &
+        PIDS+=($!)
+        ;;
+    none|*)
+        echo "[+] Starting Headless MediaPipe Vision Tracker Node (V6, $CAM_DESC, ${FPS} FPS)..."
+        python3 "$SCRIPT_DIR/vision_tracker_v6.py" --device "$DEVICE" --fps "$FPS" --no-gui &
+        PIDS+=($!)
+        ;;
+esac
 
 if [ "$RECORD_FLAG" = true ]; then
     sleep 0.5
