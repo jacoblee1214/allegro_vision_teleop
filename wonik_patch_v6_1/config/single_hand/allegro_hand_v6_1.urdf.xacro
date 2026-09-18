@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="allegro_hand_v6">
+    <xacro:arg name="ros2_control_hardware_type" default="hardware" />
+    <xacro:arg name="hand" default="right" />
+    <xacro:arg name="ah_prefix" default="" />
+    <xacro:arg name="io_interface_descriptor" default="modbus_tcp:192.168.40.100:502" />
+    <xacro:arg name="hand_id" default="1" />
+
+    <xacro:property name="hand_arg" value="$(arg hand)"/>
+
+    <xacro:if value="${hand_arg == 'right'}"> 
+        <xacro:include filename="$(find allegro_hand_v6_description)/urdf/allegro_hand_v6_right.urdf.xacro" />
+    </xacro:if>
+    
+    <xacro:if value="${hand_arg == 'left'}">
+        <xacro:include filename="$(find allegro_hand_v6_description)/urdf/allegro_hand_v6_left.urdf.xacro" />
+    </xacro:if>
+
+    <xacro:include filename="$(find allegro_hand_v6_bringup)/config/single_hand/allegro_hand_v6_1.ros2_control.xacro" />
+    <xacro:allegro_hand_v6_ros2_control name="allegro_hand" prefix="$(arg ah_prefix)" ros2_control_hardware_type="$(arg ros2_control_hardware_type)" io_interface_descriptor="$(arg io_interface_descriptor)" hand_id="$(arg hand_id)" hand="$(arg hand)"/> 
+</robot>

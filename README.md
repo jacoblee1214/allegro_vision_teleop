@@ -105,6 +105,42 @@ flowchart TD
    - RViz를 별도로 띄울 필요 없이, 단일 창 내부에서 21개 STL 메쉬와 조명/음영이 적용된 실시간 3D 로봇 손을 360도 궤도 카메라로 관찰할 수 있습니다.
    - 내장 웹캠 및 USB 카메라의 v4l2 장치를 OpenCV 기반으로 후보군을 순차 프로빙하여 `/dev/video2` 등 활성 캡처 장치를 자동으로 찾아 연결합니다.
 
+### 3-1. v6_1: 좌표 변환 단일화 (RViz 뒤로 꺾임 / 데이터셋 좌표 혼재 수정)
+
+v6에서는 real 모드 왼손일 때 RViz(`robot_state_publisher`)가 하드웨어 `/joint_states`(모터 좌표, 펴짐 = -1.57 rad)를 그대로 그려서, 실물은 펴져 있는데 URDF만 손등 쪽으로 90° 꺾여 보였습니다. 데이터셋 레코더도 state는 모터 좌표, action은 URDF 좌표로 섞여 기록됐습니다.
+
+v6_1은 URDF ↔ 모터 변환을 `sim_bridge_node_v6_1.py` 한 곳에서만 합니다.
+
+| 경로 | 변환 (real + 왼손, joint11/21/31/41) |
+|---|---|
+| 명령 `/allegro/target_joints` → `/allegro_hand_position_controller/commands` | `-π/2` |
+| 피드백 `/joint_states` → `/allegro/joint_states_urdf` | `+π/2` |
+
+RViz, cockpit/dashboard 3D 뷰, `dataset_recorder_v6_1.py`는 모두 `/allegro/joint_states_urdf`만 구독합니다. sim 모드와 오른손은 값을 그대로 전달합니다.
+
+```bash
+./run_cockpit_v6_1.sh real      # 단일창 3D 콕핏
+./run_dashboard_v6_1.sh real    # 대시보드 + RViz2
+./run_v6_1.sh real --record     # 통합 런처 (옵션은 run_v6.sh와 동일)
+```
+
+**그 외 v6_1 변경점**
+- **H키 (손 모델 전환)**: `sim`/`nodes` 모드에서는 UI·리타기팅·브릿지·RViz가 함께 전환됩니다(v6에서는 브릿지가 다른 토픽을 구독해 전환이 전달되지 않았음). `real` 모드에서는 비활성화됩니다. 실물 손은 하드웨어가 감지한 한쪽으로 고정되며, 전환하면 반대 손 기구학과 오프셋 해제가 실물에 전달되기 때문입니다.
+- **Cockpit 3D 뷰 끊김 수정**: v6는 카메라 루프 안에서 `spin_once`를 프레임당 한 번만 호출해 `/joint_states`(100 Hz)를 초당 약 13개만 처리했고, 큐에 밀린 과거 자세를 그렸습니다. v6_1은 ROS를 백그라운드 스레드에서 spin해서 100/s를 모두 처리합니다(dashboard도 동일하게 수정).
+
+**원익 패키지 패치 (`allegro_hand_v6_bringup`, 원본 파일은 수정하지 않고 새 파일만 추가)** — 패치 파일은 이 저장소의 `wonik_patch_v6_1/`에 같은 경로 구조로 들어 있습니다. 패키지를 git에서 새로 받은 경우 아래처럼 복사한 뒤 빌드합니다.
+
+```bash
+cp -r wonik_patch_v6_1/* /home/humble_ws/src/allegro_hand_v6/allegro_hand_v6_bringup/
+cd /home/humble_ws && colcon build --symlink-install --packages-select allegro_hand_v6_bringup
+```
+
+| 새 파일 | 원본 대비 변경점 |
+|---|---|
+| `launch/allegro_hand_v6_1.launch.py` | `joint_states_topic` 인자 추가 → `robot_state_publisher`의 `joint_states` remap. `allegro_hand_v6_1.urdf.xacro` 사용 |
+| `config/single_hand/allegro_hand_v6_1.urdf.xacro` | `allegro_hand_v6_1.ros2_control.xacro`를 include, `hand` 인자 전달 |
+| `config/single_hand/allegro_hand_v6_1.ros2_control.xacro` | 왼손 + hardware일 때 joint11/21/31/41의 `initial_value = -π/2` → 전원 인가 직후 브릿지가 뜨기 전에도 손가락이 펴진 자세로 시작 |
+
 ---
 
 ### 4. UI 실시간 양손 전환 및 모델 즉시 갱신 (Live UI & Model Sync)

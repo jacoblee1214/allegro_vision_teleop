@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# run_teleop.sh — All-in-One Launcher for Allegro Hand V4 Vision Teleoperation
+# run_teleop_v6_1.sh — All-in-One Launcher for Allegro Hand V6 Vision Teleoperation (v6_1)
+#
+# v6_1 vs v6: left-hand MCP motor offset (-90 deg) is converted in ONE place (sim_bridge_node_v6_1):
+#   commands  URDF -> motor : joint11/21/31/41 -= pi/2   (real + left only)
+#   feedback  motor -> URDF : /joint_states -> /allegro/joint_states_urdf
+# RViz (robot_state_publisher), cockpit/dashboard and dataset recorder all read /allegro/joint_states_urdf.
+# Requires allegro_hand_v6_bringup/launch/allegro_hand_v6_1.launch.py (Wonik package patch, see README).
 #
 # Usage:
 #   ./run_teleop.sh [mode] [options]
@@ -56,7 +62,7 @@ if [ ! -f "/.dockerenv" ] && [ "${RUN_ON_HOST:-0}" != "1" ]; then
 
     exec docker exec $DOCKER_FLAGS \
         -e DISPLAY="${DISPLAY:-:1}" \
-        ros_humble_dev /home/humble_ws/allegro_vision_teleop/run_teleop_v6.sh "$@"
+        ros_humble_dev /home/humble_ws/allegro_vision_teleop/run_teleop_v6_1.sh "$@"
 fi
 
 MODE="nodes"
@@ -150,7 +156,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "Usage: ./run_v6.sh [nodes|sim|real] [UI options] [HW options]"
+            echo "Usage: ./run_v6_1.sh [nodes|sim|real] [UI options] [HW options]"
             echo ""
             echo "Modes:"
             echo "  nodes (default) : Launch vision tracker, retargeting, and bridge nodes"
@@ -179,7 +185,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown argument: $1"
-            echo "Run './run_v6.sh --help' for usage."
+            echo "Run './run_v6_1.sh --help' for usage."
             exit 1
             ;;
     esac
@@ -197,7 +203,7 @@ if [ -z "$USE_RVIZ" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-if [ ! -f "$SCRIPT_DIR/retargeting_node_v6.py" ]; then
+if [ ! -f "$SCRIPT_DIR/sim_bridge_node_v6_1.py" ]; then
     if [ -f "/home/humble_ws/allegro_vision_teleop/retargeting_node_v6.py" ]; then
         SCRIPT_DIR="/home/humble_ws/allegro_vision_teleop"
     elif [ -f "/home/jake/humble_ws/allegro_vision_teleop/retargeting_node_v6.py" ]; then
@@ -234,7 +240,7 @@ for sys_dev in /sys/class/video4linux/video*; do
 done
 
 # 1.1 Clean up any stale orphaned teleop processes that might hold camera video device locks
-pkill -f 'teleop_cockpit_v6\.py|teleop_dashboard_v6\.py|vision_tracker_v6\.py' 2>/dev/null || true
+pkill -f 'teleop_cockpit_v6(_1)?\.py|teleop_dashboard_v6(_1)?\.py|vision_tracker_v6\.py' 2>/dev/null || true
 sleep 0.2
 
 # 2. Camera selection & RealSense/Webcam auto-detection
@@ -330,7 +336,7 @@ trap cleanup SIGINT SIGTERM EXIT
 case "$MODE" in
     sim)
         echo "[1/4] Launching Allegro Hand V6 ($HAND_SIDE hand) Mock Hardware ($([ "$USE_RVIZ" = true ] && echo "with RViz2" || echo "Headless + Cockpit 3D"))..."
-        ros2 launch allegro_hand_v6_bringup allegro_hand.launch.py ros2_control_hardware_type:=mock_components hand:="$HAND_SIDE" use_rviz:="$USE_RVIZ" &
+        ros2 launch allegro_hand_v6_bringup allegro_hand_v6_1.launch.py joint_states_topic:=/allegro/joint_states_urdf ros2_control_hardware_type:=mock_components hand:="$HAND_SIDE" use_rviz:="$USE_RVIZ" &
         PIDS+=($!)
         sleep 3
         ;;
@@ -382,7 +388,7 @@ for ip in ['192.168.1.100', '192.168.1.101', '192.168.1.201']:
                 echo "    1. Robot 24V power supply is ON."
                 echo "    2. Ethernet cable is securely connected."
                 echo "    3. PC Ethernet IP is set (e.g. 192.168.1.10/24)."
-                echo "[!] (Tip: If testing without physical hand, run 'run_v6 sim' instead)"
+                echo "[!] (Tip: If testing without physical hand, run 'run_v6_1 sim' instead)"
                 echo "--------------------------------------------------------"
             else
                 echo "[✓] Allegro Hand V6 at $TARGET_IP is reachable!"
@@ -419,7 +425,7 @@ except Exception:
             fi
         fi
         echo "[1/4] Launching Physical Allegro Hand V6 Hardware Interface ($DESCRIPTOR, hand:=$HAND_SIDE, rviz:=$USE_RVIZ)..."
-        ros2 launch allegro_hand_v6_bringup allegro_hand.launch.py ros2_control_hardware_type:=hardware io_interface_descriptor:="$DESCRIPTOR" hand:="$HAND_SIDE" use_rviz:="$USE_RVIZ" &
+        ros2 launch allegro_hand_v6_bringup allegro_hand_v6_1.launch.py joint_states_topic:=/allegro/joint_states_urdf ros2_control_hardware_type:=hardware io_interface_descriptor:="$DESCRIPTOR" hand:="$HAND_SIDE" use_rviz:="$USE_RVIZ" &
         PIDS+=($!)
         sleep 3
         ;;
@@ -434,19 +440,19 @@ PIDS+=($!)
 sleep 0.5
 
 echo "[+] Starting Controller Bridge Node (V6, ${RATE} Hz, EMA alpha=$ALPHA, mode: $MODE, hand: $HAND_SIDE)..."
-python3 "$SCRIPT_DIR/sim_bridge_node_v6.py" --rate "$RATE" --alpha "$ALPHA" --mode "$MODE" --hand "$HAND_SIDE" &
+python3 "$SCRIPT_DIR/sim_bridge_node_v6_1.py" --rate "$RATE" --alpha "$ALPHA" --mode "$MODE" --hand "$HAND_SIDE" &
 PIDS+=($!)
 sleep 0.5
 
 case "$UI_MODE" in
     cockpit)
         echo "[+] Starting Unified 3D Cockpit Dashboard (V6, PyQt5 with Embedded 3D Hand @ ${FPS} FPS, hand: $HAND_SIDE, mode: $MODE)..."
-        python3 "$SCRIPT_DIR/teleop_cockpit_v6.py" --device "$DEVICE" --fps "$FPS" --hand "$HAND_SIDE" --mode "$MODE" &
+        python3 "$SCRIPT_DIR/teleop_cockpit_v6_1.py" --device "$DEVICE" --fps "$FPS" --hand "$HAND_SIDE" --mode "$MODE" &
         PIDS+=($!)
         ;;
     classic)
         echo "[+] Starting Classic 2D Teleop Dashboard (V6, PyQt5 Gauge UI @ ${FPS} FPS, hand: $HAND_SIDE, mode: $MODE)..."
-        python3 "$SCRIPT_DIR/teleop_dashboard_v6.py" --device "$DEVICE" --fps "$FPS" --hand "$HAND_SIDE" --mode "$MODE" &
+        python3 "$SCRIPT_DIR/teleop_dashboard_v6_1.py" --device "$DEVICE" --fps "$FPS" --hand "$HAND_SIDE" --mode "$MODE" &
         PIDS+=($!)
         ;;
     simple)
@@ -464,7 +470,7 @@ esac
 if [ "$RECORD_FLAG" = true ]; then
     sleep 0.5
     echo "[+] Starting VLA Dataset Recorder Node (V6, 20-DOF @ ${RATE}Hz)..."
-    python3 "$SCRIPT_DIR/dataset_recorder.py" --sample-hz "$RATE" --dof 20 &
+    python3 "$SCRIPT_DIR/dataset_recorder_v6_1.py" --sample-hz "$RATE" --dof 20 &
     PIDS+=($!)
 fi
 

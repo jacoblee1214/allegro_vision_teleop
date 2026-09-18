@@ -1,0 +1,70 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <xacro:macro name="allegro_hand_v6_ros2_control" params="name prefix ros2_control_hardware_type io_interface_descriptor:='modbus_tcp:192.168.40.100:502' hand_id:='1' hand:='right'">
+        <ros2_control name="${name}" type="system">
+            <hardware>
+                <xacro:if value="${ros2_control_hardware_type == 'mock_components'}">
+                    <plugin>mock_components/GenericSystem</plugin>
+                </xacro:if>
+                <xacro:if value="${ros2_control_hardware_type == 'isaac'}">
+                    <plugin>wr_topic_based_ros2_control/TopicBasedSystem</plugin>
+                    <param name="joint_commands_topic">/isaac_joint_commands</param>
+                    <param name="joint_states_topic">/isaac_joint_states</param>
+                    <param name="sum_wrapped_joint_states">false</param>
+                </xacro:if>
+                <xacro:if value="${ros2_control_hardware_type == 'hardware' or ros2_control_hardware_type == 'physical_device'}">
+                    <plugin>allegro_hand_v6_hardware/AllegroHandV6System</plugin>
+                    <param name="io_interface_descriptor">${io_interface_descriptor}</param>
+                    <param name="hand_id">${hand_id}</param>
+                    <param name="torque_constant">0.00115</param>
+                    <param name="torque_limit">0.1</param>
+                </xacro:if>
+            </hardware>
+
+            <!-- v6_1: Left hand physical MCP motors (joint11/21/31/41) are zeroed by the developer so that
+                 straight/flat = -pi/2 in motor coordinates. On real hardware, start those joints at -pi/2 so the
+                 hand powers up flat instead of flexed 90 deg until the teleop bridge takes over. -->
+            <xacro:property name="left_mcp_init" value="${-pi/2 if (hand == 'left' and (ros2_control_hardware_type == 'hardware' or ros2_control_hardware_type == 'physical_device')) else 0.0}"/>
+
+            <!-- Thumb (joint00 - joint03) -->
+            <xacro:macro name="add_v6_joint" params="joint_id initial_position:=0.0">
+                <joint name="${prefix}${joint_id}">
+                    <command_interface name="position"/>
+                    <command_interface name="effort"/>
+                    <state_interface name="position"><param name="initial_value">${initial_position}</param></state_interface>
+                    <state_interface name="velocity"><param name="initial_value">0.0</param></state_interface>
+                    <state_interface name="effort"><param name="initial_value">0.0</param></state_interface>
+                </joint>
+            </xacro:macro>
+
+            <xacro:add_v6_joint joint_id="joint00"/>
+            <xacro:add_v6_joint joint_id="joint01"/>
+            <xacro:add_v6_joint joint_id="joint02"/>
+            <xacro:add_v6_joint joint_id="joint03"/>
+
+            <!-- Index Finger (joint10 - joint13) -->
+            <xacro:add_v6_joint joint_id="joint10"/>
+            <xacro:add_v6_joint joint_id="joint11" initial_position="${left_mcp_init}"/>
+            <xacro:add_v6_joint joint_id="joint12"/>
+            <xacro:add_v6_joint joint_id="joint13"/>
+
+            <!-- Middle Finger (joint20 - joint23) -->
+            <xacro:add_v6_joint joint_id="joint20"/>
+            <xacro:add_v6_joint joint_id="joint21" initial_position="${left_mcp_init}"/>
+            <xacro:add_v6_joint joint_id="joint22"/>
+            <xacro:add_v6_joint joint_id="joint23"/>
+
+            <!-- Ring Finger (joint30 - joint33) -->
+            <xacro:add_v6_joint joint_id="joint30"/>
+            <xacro:add_v6_joint joint_id="joint31" initial_position="${left_mcp_init}"/>
+            <xacro:add_v6_joint joint_id="joint32"/>
+            <xacro:add_v6_joint joint_id="joint33"/>
+
+            <!-- Pinky Finger (joint40 - joint43) -->
+            <xacro:add_v6_joint joint_id="joint40"/>
+            <xacro:add_v6_joint joint_id="joint41" initial_position="${left_mcp_init}"/>
+            <xacro:add_v6_joint joint_id="joint42"/>
+            <xacro:add_v6_joint joint_id="joint43"/>
+        </ros2_control>
+    </xacro:macro>
+</robot>
