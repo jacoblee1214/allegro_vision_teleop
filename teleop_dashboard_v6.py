@@ -144,19 +144,19 @@ LIMITS_V6 = {
     "joint02": (-0.175, 1.309),
     "joint03": (-0.175, 1.396),
     "joint10": (-1.309, 1.309),
-    "joint11": (-1.658, 1.571),
+    "joint11": (-0.070, 1.571),
     "joint12": (-0.175, 1.396),
     "joint13": (-0.175, 1.396),
     "joint20": (-1.135, 1.135),
-    "joint21": (-1.658, 1.571),
+    "joint21": (-0.070, 1.571),
     "joint22": (-0.175, 1.396),
     "joint23": (-0.175, 1.396),
     "joint30": (-1.309, 1.309),
-    "joint31": (-1.658, 1.571),
+    "joint31": (-0.070, 1.571),
     "joint32": (-0.175, 1.396),
     "joint33": (-0.175, 1.396),
     "joint40": (-1.309, 1.309),
-    "joint41": (-1.658, 1.571),
+    "joint41": (-0.070, 1.571),
     "joint42": (-0.175, 1.396),
     "joint43": (-0.175, 1.396),
 }
@@ -239,6 +239,7 @@ class RosWorkerNode(Node):
 
         self.latest_target_joints: List[float] = [0.0] * 20
         self.latest_actual_joints: List[float] = [0.0] * 20
+        self.hand_side: str = "right"
 
         self.sub_target = self.create_subscription(
             Float64MultiArray,
@@ -296,7 +297,11 @@ class RosWorkerNode(Node):
         for out_idx, jname in enumerate(JOINT_NAMES_V6):
             for cand in [jname, f"ah_{jname}", jname.removeprefix("ah_")]:
                 if cand in name_to_idx:
-                    reordered[out_idx] = float(msg.position[name_to_idx[cand]])
+                    val = float(msg.position[name_to_idx[cand]])
+                    # Real left hand motor reports with -90 deg offset on MCP; normalize to standard URDF 0.0 rad
+                    if self.hand_side == "left" and out_idx in (5, 9, 13, 17) and val < -0.5:
+                        val += np.deg2rad(90.0)
+                    reordered[out_idx] = val
                     break
         self.latest_actual_joints = reordered
 
@@ -365,6 +370,7 @@ class TeleopDashboardWindow(QMainWindow):
 
         # ROS 2 Node setup
         self.ros_node = RosWorkerNode()
+        self.ros_node.hand_side = self.hand_side
 
         # Preload Left and Right Hand URDF models for instant live switching
         self.urdf_left = get_urdf_content("left")
@@ -662,10 +668,13 @@ class TeleopDashboardWindow(QMainWindow):
             self.lbl_hand_badge.setStyleSheet("font-size: 14px; font-weight: bold; color: #38bdf8;")
             self.btn_toggle_hand.setStyleSheet("background-color: #1e293b; color: #38bdf8; border: 1px solid #0284c7;")
 
-        # 1. Broadcast state to retargeting node
+        # 1. Update ROS worker node hand_side
+        self.ros_node.hand_side = self.hand_side
+
+        # 2. Broadcast state to retargeting node and sim_bridge_node
         self.broadcast_state()
 
-        # 2. Live update RViz and robot_state_publisher with the new hand model!
+        # 3. Live update RViz and robot_state_publisher with the new hand model!
         new_urdf = self.urdf_right if self.hand_side == "right" else self.urdf_left
         if new_urdf:
             self.ros_node.update_robot_description(new_urdf)

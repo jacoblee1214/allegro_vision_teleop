@@ -77,20 +77,37 @@ Wonik Allegro Hand V6 내부 제어기(MCU) 비휘발성 메모리에는 손의 
 | **`joint12~42`** | PIP Flexion (4지 3번째: 중간 마디 굽힘) | 굽힘 시 **양수(`0.0 ~ +1.40 rad`)** | 굽힘 시 **양수(`0.0 ~ +1.40 rad`)** |
 | **`joint13~43`** | DIP Flexion (4지 4번째: 끝 마디 굽힘) | 굽힘 시 **양수(`0.0 ~ +1.40 rad`)** | 굽힘 시 **양수(`0.0 ~ +1.40 rad`)** (인위적 커플링 제거) |
 
-### 3. 🛡️ URDF 버전 분리 관리 & SIM/HW 완벽 동기화
-- **하드웨어 모터와 RViz 3D 모델 극성 동기화**:
-  - 실제 왼손 로봇 하드웨어는 음수(`-`) 명령 인가 시 모터가 검지 방향 위쪽으로 거상합니다.
-  - 기존 원익 기본 URDF는 `joint01` 회전축이 `<axis xyz="0 0 -1"/>`로 정의되어 있어, 실물 로봇과 달리 RViz 시뮬레이션(SIM) 상에서 엄지가 거꾸로 내려가는 불일치가 있었습니다.
-  - 검증 버전인 **`allegro_hand_v6_left_v6.1_teleop.urdf`**에서 `joint01` 축을 `<axis xyz="0 0 1"/>`로 정합하여 **실물 하드웨어(HW)와 RViz 시뮬레이션(SIM)이 100% 동일하게 연동**되도록 완성했습니다.
-- **제조사 공식 업데이트 대비 보호**:
-  - 원익 제조사에서 차후 패키지 업데이트를 배포하더라도, 대시보드([`teleop_dashboard_v6.py`](file:///home/jake/humble_ws/allegro_vision_teleop/teleop_dashboard_v6.py))는 버전 관리되는 `v6.1_teleop.urdf`를 최우선 로드하므로 튜닝된 기구학 설정이 절대 덮어씌워지지 않습니다.
+### 3. 🛡️ Vision2Real 기구학 정합 원리 (CAD 순정 URDF 보존 & 모터 오프셋 분리)
+> **"왜 URDF 원본을 건드리지 않고, 제어 브릿지에서 모터 오프셋을 처리해야 하는가?"**
+>
+> 향후 xArm7 등 매니퓰레이터 로봇 팔과 핸드를 결합하여 전체 상체(Arm+Hand) 역기구학(IK/FK) 및 모션 플래닝을 수행할 때, 손 모델의 원점이나 회전축이 비표준으로 변경되어 있으면 매니퓰레이션 기구학 체인이 완전히 꼬이게 됩니다. 따라서 본 시스템은 **Vision2Real 기초를 완벽히 정립**하여 동작합니다:
 
-### 4. UI 실시간 양손 전환 및 RViz 3D 모델 즉시 갱신 (Live UI & RViz Sync)
-- **콕핏 대시보드 (`teleop_dashboard_v6.py`)** 내에 **`HAND: [ ✋ LEFT HAND (왼손) ]` / `[ 🤚 RIGHT HAND (오른손) ]`** 상태 카드 및 원클릭 전환 버튼이 탑재되었습니다.
+```mermaid
+flowchart LR
+    A["🎥 비전 트래커<br/>(MediaPipe 21 3D)"] -->|관절 각도 계산| B["📐 순정 URDF 표준 좌표계<br/>• 손 폈을 때: 0.00 rad (완전 신전)<br/>• 주먹 쥘 때: +1.57 rad (정방향 굽힘)"]
+    B -->|동일한 표준 각도 전달| C["🖥️ UI & 3D 뷰어 (RViz / Cockpit)<br/>• 손가락 똑바로 직립 신전<br/>• 뒤로 꺾임 0% 완전 박멸"]
+    B -->|실물 로봇 송출 시| D["⚡ sim_bridge_node (Vision2Real)<br/>• 실물 모터 오프셋 (-90° / -1.57 rad) 적용"]
+    D -->|실물 모터 수신| E["🦾 Allegro Hand V6 실물 로봇<br/>• 모터 -1.57 rad 수신<br/>• 실물 손가락 똑바로 직립 신전!"]
+```
+
+1. **URDF 및 비전 리타게팅의 순정 표준화**:
+   - `urdf/allegro_hand_v6_left.urdf`는 원익 공식 CAD 원본 그대로 `lower="-0.0698132" upper="1.5707963"`를 유지합니다.
+   - `retargeting_node_v6.py`는 손을 폈을 때 `0.00 rad` (직립 신전), 접을 때 `0.0 ~ +1.57 rad`를 출력합니다.
+   - 따라서 **RViz2 및 3D Cockpit 위젯에서 손가락이 손등 뒤로 꺾이지 않고 하늘을 향해 곧게 펴진 완벽한 기본 디폴트 자세**를 유지합니다.
+2. **실물 로봇 모터 오프셋의 완벽 분리 (`sim_bridge_node_v6.py`)**:
+   - 실물 로봇 하드웨어의 모터 영점은 기계적으로 90도 굽혀진 상태입니다.
+   - 따라서 `sim_bridge_node_v6.py`가 `real` 모드에서 실물 로봇(`allegro_hand_position_controller/commands`)으로 명령을 쏠 때만 **`-90도(-1.5708 rad)`**를 적용하여 송출합니다.
+   - 결과: **URDF 시각화도 똑바로 펴지고, 실물 로봇 손도 똑바로 펴지며 1:1로 완벽 동기화**됩니다!
+
+---
+
+### 4. UI 실시간 양손 전환 및 모델 즉시 갱신 (Live UI & Model Sync)
+- **콕핏 대시보드 (`teleop_cockpit_v6.py` / `teleop_dashboard_v6.py`)** 내에 **`HAND: [ ✋ LEFT HAND (왼손) ]` / `[ 🤚 RIGHT HAND (오른손) ]`** 상태 카드 및 원클릭 전환 버튼이 탑재되었습니다.
 - 단축키 **`H` (Switch Hand)** 또는 버튼을 누르면:
   1. 리타게팅 노드의 키네마틱스 연산이 실시간으로 전환됩니다 (필터 자동 리셋).
-  2. **RViz2의 3D 로봇 손 모델(`/robot_description`)과 `robot_state_publisher`의 TF 좌표계가 재시작 없이 화면에서 즉시 왼손 ↔ 오른손으로 바뀝니다.**
-- CLI 인자 `--hand left` 또는 `--hand right`를 통해 초기 상태를 지정할 수도 있습니다.
+  2. 제어 브릿지 노드의 Vision2Real 모터 오프셋이 즉시 활성화/비활성화됩니다.
+  3. **3D 로봇 모델(`/robot_description`)과 `robot_state_publisher`의 TF 좌표계가 재시작 없이 화면에서 즉시 왼손 ↔ 오른손으로 바뀝니다.**
+- 기본 디폴트는 **`right` (오른손)**이며, 로봇 연결 시 하드웨어 레지스터를 통해 자동 감지됩니다.
 
 ---
 
@@ -221,7 +238,16 @@ docker exec -it ros_humble_dev bash -c "
 > ### ⚡ 실행 방법 요약 (어떤 GUI를 쓸지 선택하여 1초 실행)
 >
 > **1. 🖥️ [신규] 통합 3D 콕핏 UI (단일 윈도우 - 창 1개로 완결)**
-> - 카메라 영상 옆에 실시간 3D 로봇 핸드가 내장되어 있어 별도의 RViz2 창 없이 1개 창으로 편리하게 사용합니다.
+> - 카메라 영상 옆 중앙에 실시간 3D 로봇 핸드가 내장되어 있어 **별도의 RViz2 창 없이 단 1개의 창으로 완결**됩니다.
+> ```
+> ┌─────────────────────────┬─────────────────────────┬─────────────────────────┐
+> │ [좌측] 🎥 카메라 영상     │ [중앙] 🤖 3D 로봇 핸드   │ [우측] 🎮 계측 및 제어    │
+> │ • 웹캠/리얼센스 RGB 영상    │ • 순정 URDF 실시간 3D 손   │ • 20-DOF 실시간 각도 바 │
+> │ • MediaPipe 21개 스켈레톤  │ • 마우스 드래그 360° 회전 │ • 왼손/오른손 [H] 전환  │
+> │ • 핀치 거리 실시간 측정   │ • 마우스 휠 줌 인/아웃   │ • Clutch [Space] 고정   │
+> │ • 트래킹 상태 인디케이터 │ • 더블클릭 뷰포트 리셋  │ • Record [R] / Tag [S]  │
+> └─────────────────────────┴─────────────────────────┴─────────────────────────┘
+> ```
 > ```bash
 > # 실물 로봇 연결 시 (하드웨어 및 왼손/오른손 자동 감지)
 > ./run_cockpit.sh real
@@ -234,7 +260,16 @@ docker exec -it ros_humble_dev bash -c "
 > ---
 >
 > **2. 📊 [클래식] 2D 텔레옵 대시보드 + RViz2 분리 창 모드 (기존 방식)**
-> - 20-DOF 관절별 상세 각도 게이지 바와 공식 RViz2 창이 함께 실행되어 상세 텔레메트리를 모니터링합니다.
+> - 20-DOF 관절별 상세 각도 게이지 바와 공식 RViz2 창이 함께 실행되어 상세 텔레메트리를 분리 모니터링합니다.
+> ```
+> ┌───────────────────────────────────────────────┬───────────────────────────────────────────────┐
+> │ [LEFT] Live Camera View & Hand Tracking       │ [RIGHT] 20-DOF Joint Telemetry & Cockpit Ctrl │
+> │ • RealSense / Webcam RGB Feed (60 FPS)        │ • Thumb, Index, Middle, Ring, Pinky           │
+> │ • MediaPipe 21 3D Landmarks & Skeleton        │ • Normalized angle gauge bars & rad values    │
+> │ • Live Pinch Metric (d_pinch in cm)           │ • Clutch [Space], Record [R], Tag [S]         │
+> └───────────────────────────────────────────────┴───────────────────────────────────────────────┘
+>                                  + [Separate Window] ROS 2 RViz2 (RobotModel)
+> ```
 > ```bash
 > # 실물 로봇 연결 시
 > ./run_dashboard.sh real

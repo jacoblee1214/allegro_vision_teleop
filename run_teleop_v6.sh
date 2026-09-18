@@ -397,8 +397,8 @@ python3 "$SCRIPT_DIR/retargeting_node_v6.py" --quiet --hand "$HAND_SIDE" &
 PIDS+=($!)
 sleep 0.5
 
-echo "[+] Starting Controller Bridge Node (V6, ${RATE} Hz, EMA alpha=$ALPHA)..."
-python3 "$SCRIPT_DIR/sim_bridge_node_v6.py" --rate "$RATE" --alpha "$ALPHA" &
+echo "[+] Starting Controller Bridge Node (V6, ${RATE} Hz, EMA alpha=$ALPHA, mode: $MODE, hand: $HAND_SIDE)..."
+python3 "$SCRIPT_DIR/sim_bridge_node_v6.py" --rate "$RATE" --alpha "$ALPHA" --mode "$MODE" --hand "$HAND_SIDE" &
 PIDS+=($!)
 sleep 0.5
 

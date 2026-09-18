@@ -26,7 +26,8 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
-from std_msgs.msg import Float64MultiArray
+import json
+from std_msgs.msg import Float64MultiArray, String
 
 # Dynamically import safety_utils_v6 from this script's directory
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -34,8 +35,17 @@ from safety_utils_v6 import CONTROLLER_JOINT_ORDER, JOINT_LIMITS, N_JOINTS
 
 INPUT_TOPIC = "/allegro/target_joints"
 OUTPUT_TOPIC = "/allegro_hand_position_controller/commands"
+STATE_TOPIC = "/allegro_teleop/state"
 DEFAULT_ALPHA = 0.25
 DEFAULT_RATE = 100.0  # Hz (matches controller_manager 100Hz update_rate)
+
+# Left hand finger MCP joint indices in CONTROLLER_JOINT_ORDER:
+# joint11 (Index MCP) = index 5
+# joint21 (Middle MCP) = index 9
+# joint31 (Ring MCP) = index 13
+# joint41 (Pinky MCP) = index 17
+LEFT_MCP_JOINT_INDICES = (5, 9, 13, 17)
+MOTOR_OFFSET_90DEG = np.deg2rad(90.0)  # 1.5707963 rad
 
 BRIDGE_QOS = QoSProfile(
     reliability=QoSReliabilityPolicy.RELIABLE,
@@ -51,12 +61,16 @@ class SimBridgeNode(Node):
         output_topic: str = OUTPUT_TOPIC,
         alpha: float = DEFAULT_ALPHA,
         rate: float = DEFAULT_RATE,
+        mode: str = "real",
+        hand_side: str = "right",
     ) -> None:
         super().__init__("sim_bridge_node")
         self.input_topic = input_topic
         self.output_topic = output_topic
         self.alpha = float(np.clip(alpha, 0.01, 1.0))
         self.rate = max(10.0, float(rate))
+        self.mode = mode.lower()
+        self.hand_side = hand_side.lower()
 
         self._seq = 0
         self._last_log_time = time.monotonic()
@@ -67,11 +81,19 @@ class SimBridgeNode(Node):
         self._last_rate_time = time.monotonic()
         self._actual_rate = 0.0
 
-        # Subscriber: Target Joints from Retargeting Node
+        # Subscriber: Target Joints from Retargeting Node (Standard URDF coordinates)
         self._sub = self.create_subscription(
             Float64MultiArray,
             self.input_topic,
             self._target_joints_callback,
+            BRIDGE_QOS,
+        )
+
+        # Subscriber: Teleop Operator State (Dynamic Hand Model Switch from UI)
+        self._sub_state = self.create_subscription(
+            String,
+            STATE_TOPIC,
+            self._teleop_state_callback,
             BRIDGE_QOS,
         )
 
@@ -88,11 +110,34 @@ class SimBridgeNode(Node):
 
         self.get_logger().info(
             f"Bridge initialized: '{self.input_topic}' → '{self.output_topic}'"
+            f" | Mode: {self.mode.upper()} | Hand Side: {self.hand_side.upper()}"
             f" | Command Rate: {self.rate:.1f} Hz (Period: {timer_period*1000:.1f}ms) | EMA alpha={self.alpha:.2f}"
         )
+        if self.mode == "real" and self.hand_side == "left":
+            self.get_logger().info(
+                "⚡ [Vision2Real] Real Left Hand HW Motor Offset (-90 deg) ENABLED on joint11, joint21, joint31, joint41."
+            )
         self.get_logger().info(
             f"Expected joints count: {N_JOINTS} ({CONTROLLER_JOINT_ORDER[0]} ~ {CONTROLLER_JOINT_ORDER[-1]})"
         )
+
+    def _teleop_state_callback(self, msg: String) -> None:
+        """Handles dynamic hand model switching [H] from Dashboard / Cockpit UI."""
+        try:
+            state = json.loads(msg.data)
+            new_hand = state.get("hand_side")
+            if new_hand and new_hand in ("left", "right") and new_hand != self.hand_side:
+                self.hand_side = new_hand
+                self._filtered_angles = None  # Reset filter history on hand switch
+                self.get_logger().info(
+                    f"[UI HAND SWITCH] 🔄 Active Hand Model switched to: {self.hand_side.upper()} HAND in bridge"
+                )
+                if self.mode == "real" and self.hand_side == "left":
+                    self.get_logger().info(
+                        "⚡ [Vision2Real] Left Hand HW Motor Offset (-90 deg) ACTIVATED on joint11, joint21, joint31, joint41."
+                    )
+        except Exception as e:
+            self.get_logger().error(f"Failed to parse teleop_state message in bridge: {e}")
 
     def _target_joints_callback(self, msg: Float64MultiArray) -> None:
         if len(msg.data) != N_JOINTS:
@@ -136,9 +181,17 @@ class SimBridgeNode(Node):
             lo, hi = JOINT_LIMITS[joint_name]
             self._filtered_angles[i] = np.clip(self._filtered_angles[i], lo, hi)
 
-        # 3. Publish smoothed command to hardware position controller at constant high frequency
+        # 3. Apply Vision2Real Hardware Motor Offset if in Real Mode on Left Hand
+        # On Real Left Hand, motor 0 rad is at 90 deg curled, so -90 deg (-1.5708 rad)
+        # must be sent to the physical motor for fingers to open completely straight.
+        cmd_data = self._filtered_angles.copy()
+        if self.mode == "real" and self.hand_side == "left":
+            for idx in LEFT_MCP_JOINT_INDICES:
+                cmd_data[idx] -= MOTOR_OFFSET_90DEG
+
+        # Publish command to hardware position controller at constant high frequency
         cmd_msg = Float64MultiArray()
-        cmd_msg.data = self._filtered_angles.tolist()
+        cmd_msg.data = cmd_data.tolist()
         self._pub.publish(cmd_msg)
         self._seq += 1
 
@@ -149,8 +202,9 @@ class SimBridgeNode(Node):
             md = self._filtered_angles[8:12]
             rg = self._filtered_angles[12:16]
             pk = self._filtered_angles[16:20]
+            offset_tag = " (⚡ HW Motor Offset -90° Applied)" if (self.mode == "real" and self.hand_side == "left") else ""
             self.get_logger().info(
-                f"[Output Rate: {self._actual_rate:.1f} Hz (Target: {self.rate:.0f} Hz) | EMA alpha={self.alpha:.2f} | Frame #{self._seq}]\n"
+                f"[Output Rate: {self._actual_rate:.1f} Hz (Target: {self.rate:.0f} Hz) | EMA alpha={self.alpha:.2f} | Frame #{self._seq} | Mode: {self.mode.upper()}{offset_tag}]\n"
                 f"  Thumb : [{th[0]:+.3f}, {th[1]:+.3f}, {th[2]:+.3f}, {th[3]:+.3f}]\n"
                 f"  Index : [{ix[0]:+.3f}, {ix[1]:+.3f}, {ix[2]:+.3f}, {ix[3]:+.3f}]\n"
                 f"  Middle: [{md[0]:+.3f}, {md[1]:+.3f}, {md[2]:+.3f}, {md[3]:+.3f}]\n"
@@ -165,10 +219,19 @@ def main() -> None:
     parser.add_argument("--output", type=str, default=OUTPUT_TOPIC, help="Output controller command topic")
     parser.add_argument("--alpha", type=float, default=DEFAULT_ALPHA, help="EMA smoothing factor (0.0~1.0, default: 0.25)")
     parser.add_argument("--rate", "--hz", dest="rate", type=float, default=DEFAULT_RATE, help="Command publishing frequency in Hz (default: 100.0, e.g. 60 or 100 for tremor suppression)")
+    parser.add_argument("--mode", type=str, default="real", choices=["real", "sim", "nodes"], help="Operation mode (default: real)")
+    parser.add_argument("--hand", type=str, default="right", choices=["left", "right"], help="Hand model side (default: right)")
     args = parser.parse_args()
 
     rclpy.init()
-    node = SimBridgeNode(input_topic=args.input, output_topic=args.output, alpha=args.alpha, rate=args.rate)
+    node = SimBridgeNode(
+        input_topic=args.input,
+        output_topic=args.output,
+        alpha=args.alpha,
+        rate=args.rate,
+        mode=args.mode,
+        hand_side=args.hand,
+    )
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
