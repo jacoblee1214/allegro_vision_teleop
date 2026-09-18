@@ -276,6 +276,24 @@ docker exec -it ros_humble_dev bash -c "
 
 어디서든 간편하게 실행할 수 있도록 용도별 전용 런처 스크립트와 올인원 런처(`run_v6`)를 모두 제공합니다. 이전 버전(클래식 대시보드 + RViz2)과 신규 버전(단일 창 통합 3D 콕핏)을 필요에 따라 언제든 돌려가며 사용할 수 있습니다.
 
+> [!IMPORTANT]
+> **권장 버전은 v6_1입니다** (`*_v6_1.sh`, 변경점은 [3-1](#3-1-v6_1-좌표-변환-단일화-rviz-뒤로-꺾임--데이터셋-좌표-혼재-수정) 참고). 아래 v6 명령어의 `run_cockpit.sh` / `run_dashboard.sh` / `run_v6.sh`는 각각 `run_cockpit_v6_1.sh` / `run_dashboard_v6_1.sh` / `run_v6_1.sh`로 바꿔 쓰면 되며, 옵션은 동일합니다.
+
+### ✅ 실기 테스트 순서 (v6_1)
+
+먼저 컨테이너에 이전 세션(`allegro_hand.launch.py`, RViz)이 남아 있으면 종료합니다. 손 종류는 `real` 모드에서 Modbus 레지스터 `0x0071`로 자동 감지되므로(런처 로그 `[✓] Hardware auto-detected hand type: ...` 확인), `--hand`는 감지가 실패했을 때만 지정합니다.
+
+```bash
+cd ~/humble_ws/allegro_vision_teleop
+
+./check_hand.sh                       # 0) 통신·손 종류·엔코더 확인
+./run_dashboard_v6_1.sh real          # 1) RViz: 켜자마자 손가락이 펴져 있고, 폈다/쥐었을 때 실물과 일치하는지
+./run_cockpit_v6_1.sh real            # 2) 콕핏: 3D 뷰가 실물을 지연 없이 따라가는지, Switch Hand 버튼이 비활성인지
+./run_dashboard_v6_1.sh sim           # 3) sim에서 H키: 대시보드와 RViz가 왼손↔오른손으로 함께 바뀌는지
+./run_v6_1.sh real --cockpit --record # 4) 데이터 수집: R 녹화 → S/F 태그, 에피소드 JSON의 state와 action이 같은 좌표(URDF)인지
+./run_dashboard_v6_1.sh real --hand right  # 5) 자동 감지 실패 시 손 종류 수동 지정
+```
+
 > [!TIP]
 > ### ⚡ 실행 방법 요약 (어떤 GUI를 쓸지 선택하여 1초 실행)
 >
@@ -332,7 +350,7 @@ docker exec -it ros_humble_dev bash -c "
 >   ./run_cockpit.sh real --hand left
 >   ./run_dashboard.sh real --hand right
 >   ```
-> - **실시간 전환**: GUI 실행 중에도 키보드 **`H`** 키 또는 화면 상단의 **`Switch Hand [H]`** 버튼을 누르면 재시작 없이 즉시 전환됩니다.
+> - **실시간 전환**: GUI 실행 중에도 키보드 **`H`** 키 또는 화면 상단의 **`Switch Hand [H]`** 버튼을 누르면 재시작 없이 즉시 전환됩니다. *(v6_1: `sim`/`nodes` 모드 전용. `real` 모드에서는 실물 손이 고정되므로 비활성화됩니다.)*
 >
 > ---
 >
