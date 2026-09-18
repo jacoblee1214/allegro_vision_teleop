@@ -440,7 +440,7 @@ run_v6 real --record
 [✓] Robot Identity:
     • Firmware Version : 0x0100 (v1.0)
     • Hardware Hand Type: LEFT HAND (왼손) (Register 0x0071 == 0)
-    • Serial Number     : 6PAL0002
+    • Serial Number     : XXXXXXXX (마스킹)
 
 [✓] Real-time 20-DOF Joint Encoders (Degrees & Radians):
     Thumb  (joint00~03) :  +66.5°,  -35.6°,   -2.5°,  +38.8°  | rad: [1.161, -0.621, -0.043, 0.678]
