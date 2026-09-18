@@ -116,11 +116,38 @@ def check_modbus(ip: str, port: int):
     return True
 
 def main():
+    global TARGET_IP
+    candidate_ips = ["192.168.1.100", "192.168.1.201", "192.168.40.100"]
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        if arg.isdigit():
+            target = f"192.168.1.{arg}"
+        elif arg.count(".") == 3:
+            target = arg
+        else:
+            target = arg
+        active_ip = target
+    else:
+        # Auto-discover active IP
+        active_ip = TARGET_IP
+        for ip in candidate_ips:
+            try:
+                s = socket.socket()
+                s.settimeout(0.2)
+                res = s.connect_ex((ip, TARGET_PORT))
+                s.close()
+                if res == 0:
+                    active_ip = ip
+                    break
+            except Exception:
+                pass
+
+    TARGET_IP = active_ip
     print_banner()
-    ip = sys.argv[1] if len(sys.argv) > 1 else TARGET_IP
-    if not check_ping(ip):
+
+    if not check_ping(active_ip):
         sys.exit(1)
-    if not check_modbus(ip, TARGET_PORT):
+    if not check_modbus(active_ip, TARGET_PORT):
         sys.exit(1)
 
 if __name__ == "__main__":

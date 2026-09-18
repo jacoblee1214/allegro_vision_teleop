@@ -231,28 +231,57 @@ for sys_dev in /sys/class/video4linux/video*; do
             mknod "/dev/video$v_idx" c "${dev_maj_min%:*}" "${dev_maj_min#*:}" 2>/dev/null && chmod 666 "/dev/video$v_idx" 2>/dev/null || true
         fi
     fi
-done
+# 1.1 Clean up any stale orphaned teleop processes that might hold camera video device locks
+pkill -f 'teleop_cockpit_v6\.py|teleop_dashboard_v6\.py|vision_tracker_v6\.py' 2>/dev/null || true
+sleep 0.2
 
-# 2. Camera selection & RealSense auto-detection
+# 2. Camera selection & RealSense/Webcam auto-detection
 if [ -z "$DEVICE" ]; then
     DETECTED_DEV=$(python3 -c "
-import glob, subprocess
+import glob, cv2, subprocess
+
+# 1. First prioritize Intel RealSense if available
 for dev in sorted(glob.glob('/dev/video*'), key=lambda x: int(x.replace('/dev/video', '')) if x.replace('/dev/video', '').isdigit() else 999):
     try:
-        out = subprocess.check_output(['v4l2-ctl', '-d', dev, '--all'], stderr=subprocess.DEVNULL, timeout=1.0).decode('utf-8', errors='ignore')
+        out = subprocess.check_output(['v4l2-ctl', '-d', dev, '--all'], stderr=subprocess.DEVNULL, timeout=0.5).decode('utf-8', errors='ignore')
         if 'RealSense' in out and ('YUYV' in out or 'white_balance' in out):
-            print(dev.replace('/dev/video', ''))
-            break
+            print(f'realsense:{dev.replace(\"/dev/video\", \"\")}')
+            raise SystemExit(0)
+    except Exception:
+        pass
+
+# 2. Probe working capture device using OpenCV
+dev_paths = sorted(glob.glob('/dev/video*'), key=lambda x: int(x.replace('/dev/video', '')) if x.replace('/dev/video', '').isdigit() else 999)
+for dev in dev_paths:
+    idx = int(dev.replace('/dev/video', ''))
+    try:
+        cap = cv2.VideoCapture(idx)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            cap.release()
+            if ret and frame is not None and frame.size > 0:
+                name = 'Camera'
+                try:
+                    with open(f'/sys/class/video4linux/video{idx}/name') as f:
+                        name = f.read().strip()
+                except Exception:
+                    pass
+                print(f'{name}:{idx}')
+                raise SystemExit(0)
     except Exception:
         pass
 " 2>/dev/null || true)
 
-    if [ -n "$DETECTED_DEV" ]; then
-        DEVICE="$DETECTED_DEV"
+    if [[ "$DETECTED_DEV" =~ realsense:([0-9]+) ]]; then
+        DEVICE="${BASH_REMATCH[1]}"
         CAM_DESC="Intel RealSense RGB Camera (/dev/video$DEVICE [Auto-detected])"
+    elif [[ "$DETECTED_DEV" =~ (.*):([0-9]+) ]]; then
+        CAM_NAME="${BASH_REMATCH[1]}"
+        DEVICE="${BASH_REMATCH[2]}"
+        CAM_DESC="$CAM_NAME (/dev/video$DEVICE [Auto-detected])"
     else
         DEVICE="0"
-        CAM_DESC="Default Webcam (/dev/video0)"
+        CAM_DESC="Default Camera (/dev/video0)"
     fi
 else
     CAM_DESC="/dev/video$DEVICE (User specified)"
@@ -327,11 +356,9 @@ for ip in ['192.168.1.100', '192.168.1.101', '192.168.1.201']:
         s.sendall(b'\x00\x01\x00\x00\x00\x06\x01\x03\x00\x70\x00\x01')
         res = s.recv(32)
         s.close()
-        if len(res) >= 11 and res[7] == 3:
-            val = int.from_bytes(res[9:11], 'big')
-            if val > 0:
-                print(ip)
-                break
+        if len(res) >= 9 and res[7] == 3:
+            print(ip)
+            break
     except Exception:
         pass
 " 2>/dev/null || true)
@@ -411,13 +438,13 @@ sleep 0.5
 
 case "$UI_MODE" in
     cockpit)
-        echo "[+] Starting Unified 3D Cockpit Dashboard (V6, PyQt5 with Embedded 3D Hand @ ${FPS} FPS, hand: $HAND_SIDE)..."
-        python3 "$SCRIPT_DIR/teleop_cockpit_v6.py" --device "$DEVICE" --fps "$FPS" --hand "$HAND_SIDE" &
+        echo "[+] Starting Unified 3D Cockpit Dashboard (V6, PyQt5 with Embedded 3D Hand @ ${FPS} FPS, hand: $HAND_SIDE, mode: $MODE)..."
+        python3 "$SCRIPT_DIR/teleop_cockpit_v6.py" --device "$DEVICE" --fps "$FPS" --hand "$HAND_SIDE" --mode "$MODE" &
         PIDS+=($!)
         ;;
     classic)
-        echo "[+] Starting Classic 2D Teleop Dashboard (V6, PyQt5 Gauge UI @ ${FPS} FPS, hand: $HAND_SIDE)..."
-        python3 "$SCRIPT_DIR/teleop_dashboard_v6.py" --device "$DEVICE" --fps "$FPS" --hand "$HAND_SIDE" &
+        echo "[+] Starting Classic 2D Teleop Dashboard (V6, PyQt5 Gauge UI @ ${FPS} FPS, hand: $HAND_SIDE, mode: $MODE)..."
+        python3 "$SCRIPT_DIR/teleop_dashboard_v6.py" --device "$DEVICE" --fps "$FPS" --hand "$HAND_SIDE" --mode "$MODE" &
         PIDS+=($!)
         ;;
     simple)

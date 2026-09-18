@@ -64,16 +64,17 @@ STATE_QOS = QoSProfile(
 
 
 def find_best_camera_device() -> tuple[int, str]:
-    """Auto-detect Intel RealSense RGB camera device (/dev/video*) if connected; fallback to 0."""
+    """Auto-detect working camera device: prioritizes Intel RealSense, then probes active capture devices via OpenCV."""
     import glob
     import subprocess
+    import cv2
 
     dev_paths = sorted(
         glob.glob("/dev/video*"),
         key=lambda p: int(p.replace("/dev/video", "")) if p.replace("/dev/video", "").isdigit() else 999,
     )
 
-    realsense_candidates = []
+    # 1. First prioritize Intel RealSense RGB camera if connected
     for dev in dev_paths:
         dev_idx_str = dev.replace("/dev/video", "")
         if not dev_idx_str.isdigit():
@@ -83,19 +84,38 @@ def find_best_camera_device() -> tuple[int, str]:
             out = subprocess.check_output(
                 ["v4l2-ctl", "-d", dev, "--all"],
                 stderr=subprocess.DEVNULL,
-                timeout=1.0,
+                timeout=0.5,
             ).decode("utf-8", errors="ignore")
-            if "RealSense" in out:
-                if "YUYV" in out or "white_balance" in out:
-                    return idx, f"Intel RealSense RGB Camera (/dev/video{idx})"
-                realsense_candidates.append(idx)
+            if "RealSense" in out and ("YUYV" in out or "white_balance" in out):
+                return idx, f"Intel RealSense RGB Camera (/dev/video{idx})"
         except Exception:
             pass
 
-    if realsense_candidates:
-        return realsense_candidates[0], f"Intel RealSense (/dev/video{realsense_candidates[0]})"
+    # 2. Probe working video capture devices using OpenCV
+    for dev in dev_paths:
+        dev_idx_str = dev.replace("/dev/video", "")
+        if not dev_idx_str.isdigit():
+            continue
+        idx = int(dev_idx_str)
+        try:
+            cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(idx)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None and frame.size > 0:
+                    name = "Camera"
+                    try:
+                        with open(f"/sys/class/video4linux/video{idx}/name") as f:
+                            name = f.read().strip()
+                    except Exception:
+                        pass
+                    return idx, f"{name} (/dev/video{idx})"
+        except Exception:
+            pass
 
-    return 0, "Default Webcam (/dev/video0)"
+    return 0, "Default Camera (/dev/video0)"
 
 
 class VisionTrackerNode(Node):
@@ -135,10 +155,12 @@ class VisionTrackerNode(Node):
         )
 
         # Video Capture Setup
-        self.cap = cv2.VideoCapture(self.device_id)
+        self.cap = cv2.VideoCapture(self.device_id, cv2.CAP_V4L2)
+        if not self.cap.isOpened():
+            self.cap = cv2.VideoCapture(self.device_id)
         if not self.cap.isOpened():
             self.get_logger().error(f"Failed to open video device {self.dev_desc}")
-            raise RuntimeError(f"Cannot open webcam {self.dev_desc}")
+            raise RuntimeError(f"Cannot open camera {self.dev_desc}")
 
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)

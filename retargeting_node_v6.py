@@ -226,7 +226,13 @@ class KinematicRetargetingNode(Node):
         else:
             q0 = signed_abduction_angle(v_prox, palm_forward, palm_normal) * 0.80
 
-        q1 = angle_between(v_meta, v_prox) * 1.10
+        # Joint 1: MCP Flexion (두 번째 관절: 순수 법선 굽힘 성분 추출로 Abduction 간섭 방지)
+        palm_norm_unit = palm_normal / (np.linalg.norm(palm_normal) + 1e-8)
+        proj_norm = float(np.dot(v_prox, palm_norm_unit))
+        v_in_plane = v_prox - proj_norm * palm_norm_unit
+        norm_in_plane = float(np.linalg.norm(v_in_plane) + 1e-8)
+        q1 = float(np.clip(np.arctan2(max(0.0, proj_norm - 0.005), norm_in_plane) * 1.15, 0.0, 1.571))
+
         q2 = angle_between(v_prox, v_inter) * 1.00
         q3 = angle_between(v_inter, v_dist) * 1.00
 
@@ -358,12 +364,13 @@ class KinematicRetargetingNode(Node):
         else:
             q0 = signed_abduction_angle(v_prox, palm_forward, palm_normal) * 0.85
 
-        # 2. Joint 1: MCP Flexion (두 번째 관절: 기저 굽힘)
-        # 표준 URDF 좌표계: 손을 폈을 때 0.0 rad(완전 직립 신전), 손을 접을 때 0.0 ~ 1.571 rad(정방향 양수 굽힘)
-        # 실제 하드웨어 모터 오프셋(-90도)은 sim_bridge_node에서 모터 송출 시에만 적용되므로, 비전/URDF는 완벽한 0 rad 신전 유지!
-        v_meta = pts[mcp_idx] - pts[WRIST]
-        q1_raw = angle_between(v_meta, v_prox)
-        q1 = float(np.clip(max(0.0, q1_raw - 0.05) * 1.10, 0.0, 1.571))
+        # 2. Joint 1: MCP Flexion (두 번째 관절: 기저 굽힘 - 순수 법선 투영 방식으로 Abduction과 완전 분리)
+        # 손을 폈을 때 0.0 rad(완전 직립 신전). 손가락을 좌우로 벌려도(abduction) 앞뒤로 꺾이지 않고 오직 손바닥 방향 굽힘에만 반응!
+        palm_norm_unit = palm_normal / (np.linalg.norm(palm_normal) + 1e-8)
+        proj_norm = float(np.dot(v_prox, palm_norm_unit))
+        v_in_plane = v_prox - proj_norm * palm_norm_unit
+        norm_in_plane = float(np.linalg.norm(v_in_plane) + 1e-8)
+        q1 = float(np.clip(np.arctan2(max(0.0, proj_norm - 0.005), norm_in_plane) * 1.15, 0.0, 1.571))
 
         # 3. Joint 2: PIP Flexion (세 번째 관절: 중간 마디 굽힘)
         # 0.06 rad 데드밴드를 적용하여 손을 폈을 때 미세한 자연 곡률로 인한 굽힘을 완전히 0으로 신전

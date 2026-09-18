@@ -41,6 +41,11 @@ DEFAULT_RATE = 100.0  # Hz (matches controller_manager 100Hz update_rate)
 
 
 
+# Left hand physical hardware MCP motor offset (-90 deg) intentionally configured by developer
+LEFT_MCP_JOINT_INDICES: tuple[int, ...] = (5, 9, 13, 17)  # joint11, joint21, joint31, joint41
+MOTOR_OFFSET_90DEG: float = 1.5707963267948966  # 90 degrees in radians
+
+
 BRIDGE_QOS = QoSProfile(
     reliability=QoSReliabilityPolicy.RELIABLE,
     history=QoSHistoryPolicy.KEEP_LAST,
@@ -68,8 +73,9 @@ class SimBridgeNode(Node):
 
         self._seq = 0
         self._last_log_time = time.monotonic()
-        self._latest_target: Optional[np.ndarray] = None
-        self._filtered_angles: Optional[np.ndarray] = None
+        # Immediately initialize to default zero position (손가락 쫙 펴진 상태) from tick 0
+        self._latest_target: np.ndarray = np.zeros(N_JOINTS, dtype=np.float64)
+        self._filtered_angles: np.ndarray = np.zeros(N_JOINTS, dtype=np.float64)
 
         self._tick_counter = 0
         self._last_rate_time = time.monotonic()
@@ -169,8 +175,16 @@ class SimBridgeNode(Node):
             lo, hi = JOINT_LIMITS[joint_name]
             self._filtered_angles[i] = np.clip(self._filtered_angles[i], lo, hi)
 
-        # 3. Target Command Vector (1:1 standard URDF kinematic alignment)
+        # 3. Target Command Vector
         cmd_data = self._filtered_angles.copy()
+
+        # Physical Hardware Offset:
+        # In 'real' mode on Left Hand, physical MCP motors require -90 deg (-1.5708 rad)
+        # to physically be straight flat open (as configured by hardware developer).
+        # In 'sim' mode, standard 0.0 rad is sent directly so simulation URDF does NOT bend backwards!
+        if self.mode == "real" and self.hand_side == "left":
+            for idx in LEFT_MCP_JOINT_INDICES:
+                cmd_data[idx] -= MOTOR_OFFSET_90DEG
 
         # Publish command to hardware position controller at constant high frequency
         cmd_msg = Float64MultiArray()

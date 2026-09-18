@@ -33,7 +33,7 @@ from typing import Dict, List, Optional
 # ------------------------------------------------------------------------------
 # Auto-delegation: If executed directly on host machine, forward to Docker
 # ------------------------------------------------------------------------------
-if not os.path.exists("/.dockerenv") and os.environ.get("RUN_ON_HOST", "0") != "1":
+if __name__ == "__main__" and not os.path.exists("/.dockerenv") and os.environ.get("RUN_ON_HOST", "0") != "1":
     container_name = "ros_humble_dev"
     try:
         res = subprocess.run(
@@ -180,29 +180,58 @@ LIMITS_V6 = {
 
 
 def find_best_camera_device() -> tuple[int, str]:
+    """Auto-detect working camera device: prioritizes Intel RealSense, then probes active capture devices via OpenCV."""
     import glob
     import subprocess
+    import cv2
 
     dev_paths = sorted(
         glob.glob("/dev/video*"),
         key=lambda p: int(p.replace("/dev/video", "")) if p.replace("/dev/video", "").isdigit() else 999,
     )
+
+    # 1. First prioritize Intel RealSense RGB camera if connected
     for dev in dev_paths:
-        idx_str = dev.replace("/dev/video", "")
-        if not idx_str.isdigit():
+        dev_idx_str = dev.replace("/dev/video", "")
+        if not dev_idx_str.isdigit():
             continue
-        idx = int(idx_str)
+        idx = int(dev_idx_str)
         try:
             out = subprocess.check_output(
                 ["v4l2-ctl", "-d", dev, "--all"],
                 stderr=subprocess.DEVNULL,
-                timeout=1.0,
+                timeout=0.5,
             ).decode("utf-8", errors="ignore")
             if "RealSense" in out and ("YUYV" in out or "white_balance" in out):
                 return idx, f"Intel RealSense RGB (/dev/video{idx})"
         except Exception:
             pass
-    return 0, "Webcam (/dev/video0)"
+
+    # 2. Probe working video capture devices using OpenCV
+    for dev in dev_paths:
+        dev_idx_str = dev.replace("/dev/video", "")
+        if not dev_idx_str.isdigit():
+            continue
+        idx = int(dev_idx_str)
+        try:
+            cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(idx)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None and frame.size > 0:
+                    name = "Camera"
+                    try:
+                        with open(f"/sys/class/video4linux/video{idx}/name") as f:
+                            name = f.read().strip()
+                    except Exception:
+                        pass
+                    return idx, f"{name} (/dev/video{idx})"
+        except Exception:
+            pass
+
+    return 0, "Default Camera (/dev/video0)"
 
 
 def get_urdf_content(hand_side: str) -> str:
@@ -603,7 +632,7 @@ class RobotHand3DWidget(QOpenGLWidget):
 class RosWorkerNode(Node):
     """ROS 2 Node running inside PyQt5 event loop."""
 
-    def __init__(self) -> None:
+    def __init__(self, hand_side: str = "right", mode: str = "real") -> None:
         super().__init__("teleop_dashboard_worker")
         self.pub_landmarks = self.create_publisher(Float32MultiArray, TOPIC_LANDMARKS, QOS_RELIABLE)
         self.pub_state = self.create_publisher(String, TOPIC_TELEOP_STATE, QOS_RELIABLE)
@@ -620,7 +649,9 @@ class RosWorkerNode(Node):
 
         self.latest_target_joints: List[float] = [0.0] * 20
         self.latest_actual_joints: List[float] = [0.0] * 20
-        self.hand_side: str = "right"
+        self.has_received_actual: bool = False
+        self.hand_side: str = hand_side.lower()
+        self.mode: str = mode.lower()
 
         self.sub_target = self.create_subscription(
             Float64MultiArray,
@@ -679,16 +710,22 @@ class RosWorkerNode(Node):
             for cand in [jname, f"ah_{jname}", jname.removeprefix("ah_")]:
                 if cand in name_to_idx:
                     val = float(msg.position[name_to_idx[cand]])
+                    # In real mode on Left Hand, the physical motor encoder reports -90 deg (-1.5708 rad) when flat.
+                    # Normalize by +90 deg (+1.5708 rad) for URDF 3D visualization so it displays straight flat open (0.0 rad).
+                    if self.mode == "real" and self.hand_side == "left" and jname in ("joint11", "joint21", "joint31", "joint41"):
+                        val += 1.5707963267948966
                     reordered[out_idx] = val
                     break
         self.latest_actual_joints = reordered
+        self.has_received_actual = True
 
 
 class TeleopDashboardWindow(QMainWindow):
-    def __init__(self, device_id: int | str = "auto", target_fps: int = 60, hand_side: str = "right") -> None:
+    def __init__(self, device_id: int | str = "auto", target_fps: int = 60, hand_side: str = "right", mode: str = "real") -> None:
         super().__init__()
         self.target_fps = target_fps
         self.hand_side = hand_side.lower()
+        self.mode = mode.lower()
 
         # Camera detection
         if str(device_id).lower() in ("auto", "-1", "none", ""):
@@ -698,12 +735,17 @@ class TeleopDashboardWindow(QMainWindow):
             self.dev_desc = f"/dev/video{self.device_id}"
 
         # Video capture setup
-        self.cap = cv2.VideoCapture(self.device_id)
+        self.cap = cv2.VideoCapture(self.device_id, cv2.CAP_V4L2)
+        if not self.cap.isOpened():
+            self.cap = cv2.VideoCapture(self.device_id)
         if not self.cap.isOpened() and self.device_id != 0:
-            print(f"[!] Warning: Failed to open /dev/video{self.device_id}. Falling back to /dev/video0 (Webcam)...")
-            self.device_id = 0
-            self.dev_desc = "Webcam (/dev/video0) [Fallback]"
-            self.cap = cv2.VideoCapture(0)
+            print(f"[!] Warning: Failed to open /dev/video{self.device_id}. Probing working camera candidates...")
+            best_id, best_desc = find_best_camera_device()
+            self.device_id = best_id
+            self.dev_desc = best_desc
+            self.cap = cv2.VideoCapture(self.device_id, cv2.CAP_V4L2)
+            if not self.cap.isOpened():
+                self.cap = cv2.VideoCapture(self.device_id)
 
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -747,8 +789,7 @@ class TeleopDashboardWindow(QMainWindow):
         self.current_pinch_cm = 0.0
 
         # ROS 2 Node setup
-        self.ros_node = RosWorkerNode()
-        self.ros_node.hand_side = self.hand_side
+        self.ros_node = RosWorkerNode(hand_side=self.hand_side, mode=self.mode)
 
         # Preload Left and Right Hand URDF models for instant live switching
         self.urdf_left = get_urdf_content("left")
@@ -1256,9 +1297,10 @@ class TeleopDashboardWindow(QMainWindow):
                 short_name = jname.replace("joint", "j")
                 self.joint_labels[jname].setText(f"{short_name}: {val:+.2f}")
 
-        # Update 3D Robot Hand Kinematic View
+        # Update 3D Robot Hand Kinematic View (uses real robot joint feedback if available, fallback to target)
+        display_q = self.ros_node.latest_actual_joints if getattr(self.ros_node, "has_received_actual", False) else target_q
         is_pinch = (dist_cm < 2.5) if "dist_cm" in locals() else False
-        self.widget_3d.update_joints(target_q, pinch_active=is_pinch)
+        self.widget_3d.update_joints(display_q, pinch_active=is_pinch)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.timer.stop()
@@ -1274,11 +1316,12 @@ def main() -> None:
     parser.add_argument("--device", default="auto", help="Webcam device ID (default: auto for Intel RealSense)")
     parser.add_argument("--fps", type=int, default=60, help="Target camera frame rate (default: 60)")
     parser.add_argument("--hand", default="right", choices=["left", "right"], help="Hand model side (default: right)")
+    parser.add_argument("--mode", default="real", choices=["real", "sim", "nodes"], help="Operation mode (default: real)")
     args = parser.parse_args()
 
     rclpy.init()
     app = QApplication(sys.argv)
-    window = TeleopDashboardWindow(device_id=args.device, target_fps=args.fps, hand_side=args.hand)
+    window = TeleopDashboardWindow(device_id=args.device, target_fps=args.fps, hand_side=args.hand, mode=args.mode)
     window.show()
 
     exit_code = app.exec_()
