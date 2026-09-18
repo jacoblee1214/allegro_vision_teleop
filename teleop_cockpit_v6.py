@@ -151,7 +151,7 @@ JOINT_NAMES_V6 = [
 
 # Joint limit ranges for normalization [min, max]
 LIMITS_V6 = {
-    "joint00": (-1.658, 1.658),
+    "joint00": (-0.035, 1.658),
     "joint01": (-1.658, 1.658),
     "joint02": (-0.175, 1.309),
     "joint03": (-0.175, 1.396),

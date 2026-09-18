@@ -74,8 +74,9 @@ QOS_PROFILE = QoSProfile(
 # Direct numerical control over Left Hand thumb joint signs, gains, and ranges:
 LEFT_THUMB_CONFIG = {
     # joint00: Base Opposition across palm towards index
-    # Motor polarity on Left HW: negative values rotate inward towards palm/index
-    "j00_sign": -1.0,
+    # Standard kinematics: positive values rotate inward across palm towards index (+0.05 ~ +1.40 rad)
+    # Prevents backwards hyperextension behind palm in URDF and hardware
+    "j00_sign": 1.0,
     "j00_min": 0.05,            # Open flat (rad)
     "j00_max": 1.40,            # Max opposition (rad)
     "j00_pinch": 1.25,          # Target during pinch (rad)
@@ -394,7 +395,7 @@ class KinematicRetargetingNode(Node):
     ) -> Dict[str, float]:
         """
         Computes 4 joint angles for LEFT Hand Thumb:
-        - Opposition across palm (joint00): Negative commands rotate inward on physical Left Hand.
+        - Opposition across palm (joint00): Positive commands rotate inward across palm towards index (+0.05 ~ +1.40 rad).
         - Elevation along index (joint01): Negative commands rotate UPWARD along index.
           Enhanced upward elevation reach up to 1.50 rad (~86 deg).
         """

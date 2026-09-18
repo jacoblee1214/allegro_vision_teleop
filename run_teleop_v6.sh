@@ -314,25 +314,32 @@ case "$MODE" in
             fi
         done
 
-        # If user did not explicitly specify an IP, auto-scan known IP candidates (201, 100, 101)
+        # Check primary default IP (192.168.1.100) first; fallback to other candidates only if 100 is unreachable
         if [ -z "$USER_IP" ] && [[ "$DESCRIPTOR" =~ modbus_tcp:192.168.1.100:502 ]]; then
             FOUND_IP=$(python3 -c "
 import socket
-for ip in ['192.168.1.201', '192.168.1.100', '192.168.1.101']:
+for ip in ['192.168.1.100', '192.168.1.101', '192.168.1.201']:
     try:
         s = socket.socket()
-        s.settimeout(0.2)
-        if s.connect_ex((ip, 502)) == 0:
-            print(ip)
-            s.close()
-            break
+        s.settimeout(0.3)
+        s.connect((ip, 502))
+        # Verify Allegro Hand identity: Holding Register 0x0070 (FW version >= 0x0100)
+        s.sendall(b'\x00\x01\x00\x00\x00\x06\x01\x03\x00\x70\x00\x01')
+        res = s.recv(32)
         s.close()
+        if len(res) >= 11 and res[7] == 3:
+            val = int.from_bytes(res[9:11], 'big')
+            if val > 0:
+                print(ip)
+                break
     except Exception:
         pass
 " 2>/dev/null || true)
             if [ -n "$FOUND_IP" ]; then
                 DESCRIPTOR="modbus_tcp:${FOUND_IP}:502"
-                echo "[✓] Auto-discovered Allegro Hand at ${FOUND_IP}:502"
+                if [ "$FOUND_IP" != "192.168.1.100" ]; then
+                    echo "[✓] Allegro Hand fallback discovered at ${FOUND_IP}:502"
+                fi
             fi
         fi
 

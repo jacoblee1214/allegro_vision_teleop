@@ -55,8 +55,8 @@ for _k, _v in list(JOINT_LIMITS_RIGHT.items()):
 
 # ─── Left Hand Joint Limits (exact URDF/HW-verified for allegro_hand_v6_left) ────────────────
 JOINT_LIMITS_LEFT: dict[str, tuple[float, float]] = {
-    # Thumb (joint00~03): opposition (-1.658~1.658), elevation (-1.658~1.658), flexion (-0.175~1.400)
-    "joint00": (-1.658,  1.658),
+    # Thumb (joint00~03): opposition (-0.035~1.658, matching CAD right limit), elevation (-1.658~1.658), flexion (-0.175~1.400)
+    "joint00": (-0.035,  1.658),
     "joint01": (-1.658,  1.658),
     "joint02": (-0.175,  1.400),
     "joint03": (-0.175,  1.400),
