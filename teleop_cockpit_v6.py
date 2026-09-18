@@ -100,7 +100,12 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
+    QOpenGLWidget,
 )
+import struct
+import xml.etree.ElementTree as ET
+from scipy.spatial.transform import Rotation as R
+import OpenGL.GL as gl
 
 import cv2
 import mediapipe as mp
@@ -231,51 +236,119 @@ def get_urdf_content(hand_side: str) -> str:
     return ""
 
 
-class RobotHand3DWidget(QWidget):
+def fast_load_stl(filepath):
+    """Parses binary STL file into numpy float32 vertex and normal arrays."""
+    with open(filepath, "rb") as f:
+        f.seek(80)
+        n_tri = struct.unpack("<I", f.read(4))[0]
+        data = np.frombuffer(f.read(n_tri * 50), dtype=np.uint8).reshape(n_tri, 50)
+        verts = np.frombuffer(data[:, 12:48].copy(), dtype=np.float32).reshape(n_tri * 3, 3)
+        normals = np.frombuffer(data[:, 0:12].copy(), dtype=np.float32).reshape(n_tri, 3)
+        v_normals = np.repeat(normals, 3, axis=0)
+        return verts, v_normals
+
+
+class URDFModel:
+    def __init__(self, urdf_path: Path, mesh_base_dir: Path):
+        self.tree = ET.parse(urdf_path)
+        self.root = self.tree.getroot()
+        self.joints = {j.get("name"): j for j in self.root.findall("joint")}
+        self.links = {l.get("name"): l for l in self.root.findall("link")}
+        self.mesh_base_dir = mesh_base_dir
+
+        self.link_meshes = {}
+        for lname, l in self.links.items():
+            vis = l.find("visual")
+            if vis is not None:
+                geom = vis.find("geometry")
+                if geom is not None:
+                    mesh = geom.find("mesh")
+                    if mesh is not None:
+                        fn = mesh.get("filename").replace("package://allegro_hand_v6_description/meshes/", "")
+                        mpath = self.mesh_base_dir / fn
+                        if mpath.exists():
+                            self.link_meshes[lname] = fast_load_stl(mpath)
+
+        self.fingers = [
+            (1, ["joint00", "joint01", "joint02", "joint03"]),
+            (2, ["joint10", "joint11", "joint12", "joint13"]),
+            (3, ["joint20", "joint21", "joint22", "joint23"]),
+            (4, ["joint30", "joint31", "joint32", "joint33"]),
+            (5, ["joint40", "joint41", "joint42", "joint43"]),
+        ]
+
+    def get_joint_T(self, jname: str, q: float = 0.0) -> np.ndarray:
+        j = self.joints[jname]
+        orig = j.find("origin")
+        axis = j.find("axis")
+        xyz = [float(x) for x in orig.get("xyz").split()]
+        rpy = [float(x) for x in orig.get("rpy").split()]
+        ax = [float(x) for x in axis.get("xyz").split()] if axis is not None else [0, 0, 1]
+        T = np.eye(4, dtype=np.float32)
+        T[:3, :3] = (R.from_euler("xyz", rpy).as_matrix() @ R.from_rotvec(np.array(ax) * q).as_matrix()).astype(np.float32)
+        T[:3, 3] = xyz
+        return T
+
+    def compute_link_transforms(self, q_dict: dict) -> dict:
+        transforms = {"base_link": np.eye(4, dtype=np.float32)}
+        for f_idx, j_names in self.fingers:
+            prev_T = transforms["base_link"]
+            for l_idx, jname in enumerate(j_names, 1):
+                q = q_dict.get(jname, 0.0)
+                T_j = self.get_joint_T(jname, q)
+                curr_T = prev_T @ T_j
+                link_name = f"Finger0{f_idx}_Link0{l_idx}"
+                transforms[link_name] = curr_T
+                prev_T = curr_T
+        return transforms
+
+
+class RobotHand3DWidget(QOpenGLWidget):
     """
-    Real-time 3D URDF Kinematics Visualizer for Allegro Hand V6 (5-Finger, 20-DOF).
-    Renders 3D robot hand model with interactive mouse orbit, zoom, and live joint updates.
+    Photorealistic Real-time 3D URDF CAD Visualizer for Allegro Hand V6 (5-Finger, 20-DOF).
+    Renders exact STL meshes, metallic shading, and interactive 360-degree orbit camera.
     """
 
     def __init__(self, hand_side: str = "right", parent=None):
         super().__init__(parent)
         self.hand_side = hand_side.lower()
         self.setMinimumSize(380, 420)
-        self.setStyleSheet("background-color: #0b0b12; border: 1px solid #333348; border-radius: 8px;")
+        self.setStyleSheet("background-color: #0c0d14; border: 1px solid #333348; border-radius: 8px;")
 
         # Joint angles (rad)
         self.joint_positions = [0.0] * 20
         self.pinch_active = False
 
         # Camera spherical view parameters
-        self.azimuth_default = 30.0 if self.hand_side == "left" else -30.0
+        self.azimuth_default = 28.0 if self.hand_side == "left" else -28.0
         self.elevation_default = 18.0
-        self.distance_default = 1.0
+        self.distance_default = 0.46
+        self.pan_default = [0.0, 0.0, 0.09]
 
         self.azimuth = self.azimuth_default
         self.elevation = self.elevation_default
         self.distance = self.distance_default
+        self.pan = list(self.pan_default)
 
         self._last_mouse_pos = None
-
-        # Finger color themes
-        self.finger_colors = [
-            QColor(245, 158, 11),   # Thumb: Amber/Gold
-            QColor(56, 189, 248),    # Index: Sky Blue
-            QColor(129, 140, 248),   # Middle: Indigo
-            QColor(168, 85, 247),    # Ring: Purple
-            QColor(251, 113, 133),   # Pinky: Rose
-        ]
+        self._urdf_model = None
+        self._display_lists = {}
+        self._gl_initialized = False
 
     def set_hand_side(self, hand_side: str):
-        self.hand_side = hand_side.lower()
-        self.reset_camera()
-        self.update()
+        new_side = hand_side.lower()
+        if new_side != self.hand_side:
+            self.hand_side = new_side
+            self.reset_camera()
+            if self._gl_initialized:
+                self._load_urdf_and_compile_lists()
+            self.update()
 
     def reset_camera(self):
-        self.azimuth = 30.0 if self.hand_side == "left" else -30.0
+        self.azimuth = 28.0 if self.hand_side == "left" else -28.0
         self.elevation = self.elevation_default
         self.distance = self.distance_default
+        self.pan = list(self.pan_default)
         self.update()
 
     def update_joints(self, joint_angles: list, pinch_active: bool = False):
@@ -284,217 +357,247 @@ class RobotHand3DWidget(QWidget):
             self.pinch_active = pinch_active
             self.update()
 
-    def mousePressEvent(self, event: QtGui.QMouseEvent):
-        if event.button() == Qt.LeftButton:
-            self._last_mouse_pos = event.pos()
-
-    def mouseMoveEvent(self, event: QtGui.QMouseEvent):
-        if self._last_mouse_pos is not None and event.buttons() & Qt.LeftButton:
-            dx = event.x() - self._last_mouse_pos.x()
-            dy = event.y() - self._last_mouse_pos.y()
-            self.azimuth = (self.azimuth + dx * 0.7) % 360.0
-            self.elevation = float(np.clip(self.elevation - dy * 0.6, -85.0, 85.0))
-            self._last_mouse_pos = event.pos()
-            self.update()
-
-    def mouseReleaseEvent(self, event: QtGui.QMouseEvent):
-        self._last_mouse_pos = None
-
-    def wheelEvent(self, event: QtGui.QWheelEvent):
-        delta = event.angleDelta().y()
-        zoom_factor = 0.92 if delta > 0 else 1.08
-        self.distance = float(np.clip(self.distance * zoom_factor, 0.4, 2.5))
-        self.update()
-
-    def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent):
-        self.reset_camera()
-
-    def _rot_z(self, rad: float) -> np.ndarray:
-        c, s = np.cos(rad), np.sin(rad)
-        return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
-
-    def _rot_x(self, rad: float) -> np.ndarray:
-        c, s = np.cos(rad), np.sin(rad)
-        return np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
-
-    def _rot_y(self, rad: float) -> np.ndarray:
-        c, s = np.cos(rad), np.sin(rad)
-        return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
-
-    def _compute_kinematics(self):
-        """Computes 3D coordinates for palm and all 5 fingers based on joint positions."""
-        is_left = (self.hand_side == "left")
-        mirror = 1.0 if is_left else -1.0
-
-        # Palm base geometry
-        palm_pts = [
-            np.array([-0.052 * mirror, 0.012, 0.010]),
-            np.array([ 0.052 * mirror, 0.012, 0.010]),
-            np.array([ 0.052 * mirror, 0.012, 0.090]),
-            np.array([ 0.020 * mirror, 0.012, 0.100]),
-            np.array([-0.020 * mirror, 0.012, 0.100]),
-            np.array([-0.052 * mirror, 0.012, 0.090]),
+    def _find_urdf_path(self) -> Path:
+        base_dir = Path(__file__).resolve().parent
+        candidates = [
+            base_dir / "urdf" / f"allegro_hand_v6_{self.hand_side}.urdf",
+            Path(f"/home/humble_ws/allegro_vision_teleop/urdf/allegro_hand_v6_{self.hand_side}.urdf"),
+            Path(f"/home/jake/humble_ws/allegro_vision_teleop/urdf/allegro_hand_v6_{self.hand_side}.urdf"),
+            Path(f"/home/humble_ws/src/allegro_hand_v6/allegro_hand_v6_description/urdf/allegro_hand_v6_{self.hand_side}.urdf"),
+            Path(f"/home/jake/humble_ws/src/allegro_hand_v6/allegro_hand_v6_description/urdf/allegro_hand_v6_{self.hand_side}.urdf"),
         ]
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            share_dir = get_package_share_directory("allegro_hand_v6_description")
+            candidates.append(Path(share_dir) / "urdf" / f"allegro_hand_v6_{self.hand_side}.urdf")
+        except Exception:
+            pass
+        for p in candidates:
+            if p.exists():
+                return p
+        raise FileNotFoundError(f"Cannot find URDF for {self.hand_side} hand.")
 
-        # Finger base attachments (MCP origins on palm)
-        finger_bases = [
-            np.array([-0.026 * mirror, -0.015, 0.018]),  # Thumb base
-            np.array([-0.044 * mirror,  0.012, 0.095]),  # Index base
-            np.array([-0.015 * mirror,  0.012, 0.101]),  # Middle base
-            np.array([ 0.015 * mirror,  0.012, 0.095]),  # Ring base
-            np.array([ 0.044 * mirror,  0.012, 0.086]),  # Pinky base
+    def _find_mesh_dir(self) -> Path:
+        base_dir = Path(__file__).resolve().parent
+        candidates = [
+            base_dir / "meshes",
+            Path("/home/humble_ws/allegro_vision_teleop/meshes"),
+            Path("/home/jake/humble_ws/allegro_vision_teleop/meshes"),
+            Path("/home/humble_ws/src/allegro_hand_v6/allegro_hand_v6_description/meshes"),
+            Path("/home/jake/humble_ws/src/allegro_hand_v6/allegro_hand_v6_description/meshes"),
         ]
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            share_dir = get_package_share_directory("allegro_hand_v6_description")
+            candidates.append(Path(share_dir) / "meshes")
+        except Exception:
+            pass
+        for p in candidates:
+            if p.exists():
+                return p
+        raise FileNotFoundError("Cannot find meshes directory.")
 
-        finger_chains = []
+    def _load_urdf_and_compile_lists(self):
+        self.makeCurrent()
+        # Clean up existing display lists
+        for dl in self._display_lists.values():
+            gl.glDeleteLists(dl, 1)
+        self._display_lists.clear()
 
-        # 1. Thumb Kinematics (Joints 0..3)
-        q_th = self.joint_positions[0:4]
-        p0 = finger_bases[0]
-        R_th = self._rot_z(-0.25 * mirror) @ self._rot_y(0.20 * mirror)
-        R_th = R_th @ self._rot_z(q_th[0] * (1.0 if is_left else -1.0))
-        p1 = p0 + R_th @ np.array([0.016 * mirror, -0.012, -0.014])
-        R_th = R_th @ self._rot_y(q_th[1] * (1.0 if is_left else -1.0))
-        p2 = p1 + R_th @ np.array([0.0, 0.0, 0.045])
-        R_th = R_th @ self._rot_x(q_th[2])
-        p3 = p2 + R_th @ np.array([0.0, 0.0, 0.040])
-        R_th = R_th @ self._rot_x(q_th[3])
-        p4 = p3 + R_th @ np.array([0.0, 0.0, 0.030])
-        finger_chains.append([p0, p1, p2, p3, p4])
+        try:
+            urdf_path = self._find_urdf_path()
+            mesh_dir = self._find_mesh_dir()
+            self._urdf_model = URDFModel(urdf_path, mesh_dir)
 
-        # 2~5. Four Fingers (Index, Middle, Ring, Pinky)
-        link_lens = [0.016, 0.054, 0.038, 0.026]
-        for f_idx in range(1, 5):
-            j_start = f_idx * 4
-            q = self.joint_positions[j_start:j_start + 4]
-            base_p = finger_bases[f_idx]
+            for lname, (verts, normals) in self._urdf_model.link_meshes.items():
+                dl = gl.glGenLists(1)
+                gl.glNewList(dl, gl.GL_COMPILE)
+                gl.glEnableClientState(gl.GL_VERTEX_ARRAY)
+                gl.glEnableClientState(gl.GL_NORMAL_ARRAY)
+                gl.glVertexPointer(3, gl.GL_FLOAT, 0, verts)
+                gl.glNormalPointer(gl.GL_FLOAT, 0, normals)
+                gl.glDrawArrays(gl.GL_TRIANGLES, 0, len(verts))
+                gl.glDisableClientState(gl.GL_VERTEX_ARRAY)
+                gl.glDisableClientState(gl.GL_NORMAL_ARRAY)
+                gl.glEndList()
+                self._display_lists[lname] = dl
+        except Exception as e:
+            print(f"[!] Warning: Failed to load URDF CAD meshes in 3D widget: {e}")
 
-            # Joint 0: Abduction (yaw around Z)
-            R_f = self._rot_z(q[0])
-            p1 = base_p + R_f @ np.array([0.0, 0.0, link_lens[0]])
+    def initializeGL(self):
+        gl.glClearColor(0.06, 0.06, 0.09, 1.0)
+        gl.glEnable(gl.GL_DEPTH_TEST)
+        gl.glDepthFunc(gl.GL_LEQUAL)
+        gl.glEnable(gl.GL_LIGHTING)
+        gl.glEnable(gl.GL_LIGHT0)
+        gl.glEnable(gl.GL_LIGHT1)
+        gl.glEnable(gl.GL_COLOR_MATERIAL)
+        gl.glEnable(gl.GL_NORMALIZE)
+        gl.glColorMaterial(gl.GL_FRONT_AND_BACK, gl.GL_AMBIENT_AND_DIFFUSE)
 
-            # Joint 1: MCP Flexion (pitch around X)
-            R_f = R_f @ self._rot_x(q[1])
-            p2 = p1 + R_f @ np.array([0.0, 0.0, link_lens[1]])
+        # Key light (Top-front-right)
+        gl.glLightfv(gl.GL_LIGHT0, gl.GL_POSITION, [0.6, -0.6, 1.2, 0.0])
+        gl.glLightfv(gl.GL_LIGHT0, gl.GL_DIFFUSE, [0.95, 0.95, 1.0, 1.0])
+        gl.glLightfv(gl.GL_LIGHT0, gl.GL_SPECULAR, [0.4, 0.4, 0.5, 1.0])
 
-            # Joint 2: PIP Flexion
-            R_f = R_f @ self._rot_x(q[2])
-            p3 = p2 + R_f @ np.array([0.0, 0.0, link_lens[2]])
+        # Fill light (Bottom-back-left)
+        gl.glLightfv(gl.GL_LIGHT1, gl.GL_POSITION, [-0.6, 0.6, -0.2, 0.0])
+        gl.glLightfv(gl.GL_LIGHT1, gl.GL_DIFFUSE, [0.35, 0.35, 0.45, 1.0])
 
-            # Joint 3: DIP Flexion
-            R_f = R_f @ self._rot_x(q[3])
-            p4 = p3 + R_f @ np.array([0.0, 0.0, link_lens[3]])
+        self._gl_initialized = True
+        self._load_urdf_and_compile_lists()
 
-            finger_chains.append([base_p, p1, p2, p3, p4])
+    def resizeGL(self, w: int, h: int):
+        gl.glViewport(0, 0, w, h)
+        gl.glMatrixMode(gl.GL_PROJECTION)
+        gl.glLoadIdentity()
+        aspect = w / max(1, h)
+        fov, near, far = 45.0, 0.02, 5.0
+        f = 1.0 / np.tan(np.radians(fov) / 2.0)
+        proj = np.array([
+            [f / aspect, 0, 0, 0],
+            [0, f, 0, 0],
+            [0, 0, (far + near) / (near - far), (2 * far * near) / (near - far)],
+            [0, 0, -1, 0]
+        ], dtype=np.float32)
+        gl.glMultMatrixf(proj.T)
+        gl.glMatrixMode(gl.GL_MODELVIEW)
 
-        return palm_pts, finger_chains
+    def _draw_grid(self):
+        gl.glDisable(gl.GL_LIGHTING)
+        gl.glColor4f(0.18, 0.20, 0.28, 0.6)
+        gl.glLineWidth(1.0)
+        gl.glBegin(gl.GL_LINES)
+        step, count = 0.02, 6
+        for i in range(-count, count + 1):
+            coord = i * step
+            gl.glVertex3f(coord, -count * step, 0.0)
+            gl.glVertex3f(coord, count * step, 0.0)
+            gl.glVertex3f(-count * step, coord, 0.0)
+            gl.glVertex3f(count * step, coord, 0.0)
+        gl.glEnd()
+        gl.glEnable(gl.GL_LIGHTING)
 
-    def _project(self, pt: np.ndarray, w: float, h: float) -> tuple[float, float, float]:
-        """Projects a 3D point (x, y, z) into 2D screen coordinates (u, v) and depth."""
+    def paintGL(self):
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+        gl.glLoadIdentity()
+
+        # Camera transformation
         az = np.radians(self.azimuth)
         el = np.radians(self.elevation)
+        d = self.distance
+        cx = self.pan[0] + d * np.cos(el) * np.sin(az)
+        cy = self.pan[1] - d * np.cos(el) * np.cos(az)
+        cz = self.pan[2] + d * np.sin(el)
 
-        cx, cy, cz = 0.0, 0.0, 0.12
-        px, py, pz = pt[0] - cx, pt[1] - cy, pt[2] - cz
+        fwd = np.array(self.pan) - np.array([cx, cy, cz])
+        fwd /= np.linalg.norm(fwd)
+        up = np.array([0.0, 0.0, 1.0])
+        side = np.cross(fwd, up)
+        side_norm = np.linalg.norm(side)
+        if side_norm > 1e-6:
+            side /= side_norm
+            u = np.cross(side, fwd)
+        else:
+            side = np.array([1.0, 0.0, 0.0])
+            u = np.array([0.0, 1.0, 0.0])
 
-        xc = px * np.cos(az) - py * np.sin(az)
-        yc = px * np.sin(az) + py * np.cos(az)
-        zc = pz
+        R_cam = np.eye(4, dtype=np.float32)
+        R_cam[0, :3] = side
+        R_cam[1, :3] = u
+        R_cam[2, :3] = -fwd
+        T_cam = np.eye(4, dtype=np.float32)
+        T_cam[:3, 3] = -np.array([cx, cy, cz])
+        view_mat = R_cam @ T_cam
+        gl.glMultMatrixf(view_mat.T)
 
-        xv = xc
-        yv = yc * np.cos(el) - zc * np.sin(el)
-        zv = yc * np.sin(el) + zc * np.cos(el)
+        # Draw ground grid
+        self._draw_grid()
 
-        d = 0.55 * self.distance
-        proj = d / (d + yv + 0.05)
-        scale = min(w, h) * 2.2
+        # Compute URDF Forward Kinematics
+        if self._urdf_model and self._display_lists:
+            jnames = [
+                "joint00", "joint01", "joint02", "joint03",
+                "joint10", "joint11", "joint12", "joint13",
+                "joint20", "joint21", "joint22", "joint23",
+                "joint30", "joint31", "joint32", "joint33",
+                "joint40", "joint41", "joint42", "joint43"
+            ]
+            q_dict = {name: self.joint_positions[i] for i, name in enumerate(jnames)}
+            transforms = self._urdf_model.compute_link_transforms(q_dict)
 
-        u = (w * 0.5) + (xv * scale * proj)
-        v = (h * 0.55) - (zv * scale * proj)
-        return u, v, yv
+            # Render 21 links with CAD metallic materials
+            for lname, dl in self._display_lists.items():
+                if lname in transforms:
+                    gl.glPushMatrix()
+                    gl.glMultMatrixf(transforms[lname].T)
+                    if lname == "base_link":
+                        # Palm: Matte Gunmetal Gray
+                        gl.glColor3f(0.28, 0.30, 0.35)
+                    elif "Link04" in lname:
+                        # Fingertips
+                        if self.pinch_active and lname in ("Finger01_Link04", "Finger02_Link04"):
+                            gl.glColor3f(1.0, 0.70, 0.15)  # Glowing pinch contact
+                        else:
+                            gl.glColor3f(0.82, 0.85, 0.90)  # Polished aluminum tip
+                    elif "Link01" in lname:
+                        gl.glColor3f(0.68, 0.70, 0.76)  # Darker base knurl
+                    else:
+                        gl.glColor3f(0.74, 0.77, 0.82)  # Sleek titanium link
+                    gl.glCallList(dl)
+                    gl.glPopMatrix()
 
-    def paintEvent(self, event: QtGui.QPaintEvent):
+        # Draw Cockpit 2D HUD Text Overlay
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setRenderHint(QPainter.Antialiasing)
 
-        w = float(self.width())
-        h = float(self.height())
-
-        # Background Gradient
-        bg_grad = QLinearGradient(0, 0, 0, h)
-        bg_grad.setColorAt(0.0, QColor(16, 16, 26))
-        bg_grad.setColorAt(1.0, QColor(8, 8, 14))
-        painter.fillRect(self.rect(), bg_grad)
-
-        palm_pts, finger_chains = self._compute_kinematics()
-
-        drawables = []
-
-        # 1. Palm Base
-        proj_palm = [self._project(p, w, h) for p in palm_pts]
-        avg_palm_depth = float(np.mean([p[2] for p in proj_palm]))
-        drawables.append(("palm", avg_palm_depth, proj_palm))
-
-        # 2. Finger segments and joints
-        for f_idx, chain in enumerate(finger_chains):
-            proj_chain = [self._project(p, w, h) for p in chain]
-            for seg_idx in range(len(proj_chain) - 1):
-                p_a = proj_chain[seg_idx]
-                p_b = proj_chain[seg_idx + 1]
-                seg_depth = (p_a[2] + p_b[2]) * 0.5
-                drawables.append(("segment", seg_depth, (f_idx, seg_idx, p_a, p_b)))
-            for j_idx, pt in enumerate(proj_chain):
-                drawables.append(("joint", pt[2], (f_idx, j_idx, pt)))
-
-        # Sort drawables by depth: highest yv (farthest) drawn first!
-        drawables.sort(key=lambda d: d[1], reverse=True)
-
-        for dtype, depth, data in drawables:
-            if dtype == "palm":
-                poly = QPolygonF([QPointF(p[0], p[1]) for p in data])
-                palm_brush = QBrush(QColor(30, 32, 48, 220))
-                painter.setBrush(palm_brush)
-                painter.setPen(QPen(QColor(70, 75, 110), 2))
-                painter.drawPolygon(poly)
-
-            elif dtype == "segment":
-                f_idx, seg_idx, pa, pb = data
-                color = self.finger_colors[f_idx]
-                thickness = max(4.0, 10.0 - seg_idx * 1.8)
-                painter.setPen(QPen(color, thickness, Qt.SolidLine, Qt.RoundCap))
-                painter.drawLine(QPointF(pa[0], pa[1]), QPointF(pb[0], pb[1]))
-
-            elif dtype == "joint":
-                f_idx, j_idx, pt = data
-                u, v, _ = pt
-                radius = 8.0 if j_idx == 4 else (7.0 - j_idx * 0.8)
-                rad_grad = QRadialGradient(u - radius * 0.3, v - radius * 0.3, radius)
-                if j_idx == 4:  # Fingertip
-                    rad_grad.setColorAt(0.0, QColor(255, 255, 255))
-                    rad_grad.setColorAt(0.4, self.finger_colors[f_idx])
-                    rad_grad.setColorAt(1.0, QColor(20, 20, 30))
-                else:  # Metallic joint sphere
-                    rad_grad.setColorAt(0.0, QColor(220, 230, 250))
-                    rad_grad.setColorAt(0.6, QColor(80, 85, 120))
-                    rad_grad.setColorAt(1.0, QColor(20, 20, 30))
-
-                painter.setBrush(QBrush(rad_grad))
-                painter.setPen(QPen(QColor(30, 30, 45), 1))
-                painter.drawEllipse(QPointF(u, v), radius, radius)
-
-        # Draw Cockpit HUD Overlay
-        painter.setPen(QColor(180, 190, 220))
+        # Badge: Hand Side
+        painter.setPen(QColor(180, 200, 235))
         painter.setFont(QFont("Monospace", 9, QFont.Bold))
-        hand_txt = f"URDF 3D: [ {'LEFT' if self.hand_side == 'left' else 'RIGHT'} HAND ]"
+        hand_txt = f"URDF 3D CAD: [ {'LEFT' if self.hand_side == 'left' else 'RIGHT'} HAND ]"
         painter.drawText(14, 24, hand_txt)
 
-        painter.setPen(QColor(120, 130, 160))
+        # Camera stats
+        painter.setPen(QColor(120, 135, 165))
         painter.setFont(QFont("SansSerif", 8))
         cam_info = f"Azimuth: {self.azimuth:.0f}° | Tilt: {self.elevation:.0f}° | Zoom: {1.0/self.distance:.1f}x"
         painter.drawText(14, 42, cam_info)
 
-        tip_info = "🖱️ Drag: Rotate | Scroll: Zoom | Dbl-Click: Reset"
-        painter.drawText(14, int(h - 12), tip_info)
+        # Controls Hint
+        tip_info = "🖱️ Drag: Rotate | Right-Drag: Pan | Scroll: Zoom | Dbl-Click: Reset"
+        painter.drawText(14, int(self.height() - 12), tip_info)
+        painter.end()
+
+    def mousePressEvent(self, event):
+        self._last_mouse_pos = event.pos()
+
+    def mouseMoveEvent(self, event):
+        if self._last_mouse_pos is not None:
+            dx = event.x() - self._last_mouse_pos.x()
+            dy = event.y() - self._last_mouse_pos.y()
+            if event.buttons() & Qt.LeftButton:
+                self.azimuth = (self.azimuth + dx * 0.7) % 360.0
+                self.elevation = float(np.clip(self.elevation - dy * 0.6, -85.0, 85.0))
+            elif event.buttons() & (Qt.RightButton | Qt.MiddleButton):
+                az = np.radians(self.azimuth)
+                pan_scale = 0.0006 * self.distance
+                self.pan[0] += (-dx * np.cos(az) - dy * np.sin(az)) * pan_scale
+                self.pan[1] += (-dx * np.sin(az) + dy * np.cos(az)) * pan_scale
+                self.pan[2] += dy * pan_scale
+            self._last_mouse_pos = event.pos()
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        self._last_mouse_pos = None
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        zoom_factor = 0.92 if delta > 0 else 1.08
+        self.distance = float(np.clip(self.distance * zoom_factor, 0.15, 1.8))
+        self.update()
+
+    def mouseDoubleClickEvent(self, event):
+        self.reset_camera()
 
 
 class RosWorkerNode(Node):
@@ -576,9 +679,6 @@ class RosWorkerNode(Node):
             for cand in [jname, f"ah_{jname}", jname.removeprefix("ah_")]:
                 if cand in name_to_idx:
                     val = float(msg.position[name_to_idx[cand]])
-                    # Real left hand motor reports with -90 deg offset on MCP; normalize to standard URDF 0.0 rad
-                    if self.hand_side == "left" and out_idx in (5, 9, 13, 17) and val < -0.5:
-                        val += np.deg2rad(90.0)
                     reordered[out_idx] = val
                     break
         self.latest_actual_joints = reordered
@@ -789,7 +889,7 @@ class TeleopDashboardWindow(QMainWindow):
         center_layout.setSpacing(10)
 
         hand_3d_header = QHBoxLayout()
-        self.lbl_3d_title = QLabel("🤖 3D Robot Hand (URDF Kinematics)")
+        self.lbl_3d_title = QLabel("🤖 3D Robot Hand (URDF CAD Meshes)")
         self.lbl_3d_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #ffffff;")
         self.btn_reset_view = QPushButton("Reset View")
         self.btn_reset_view.setStyleSheet("background-color: #242436; color: #38bdf8; border: 1px solid #383850; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: bold;")
@@ -804,7 +904,7 @@ class TeleopDashboardWindow(QMainWindow):
 
         # 3D Helper status bar
         hand_3d_footer = QHBoxLayout()
-        self.lbl_3d_status = QLabel("Interactive 3D View: Click & Drag to Orbit | Scroll to Zoom")
+        self.lbl_3d_status = QLabel("Interactive 3D CAD: Drag: Orbit | Right-Drag: Pan | Scroll: Zoom | Dbl-Click: Reset")
         self.lbl_3d_status.setStyleSheet("color: #8888a8; font-size: 11px;")
         hand_3d_footer.addWidget(self.lbl_3d_status)
         center_layout.addLayout(hand_3d_footer)

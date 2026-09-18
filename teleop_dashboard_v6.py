@@ -298,9 +298,6 @@ class RosWorkerNode(Node):
             for cand in [jname, f"ah_{jname}", jname.removeprefix("ah_")]:
                 if cand in name_to_idx:
                     val = float(msg.position[name_to_idx[cand]])
-                    # Real left hand motor reports with -90 deg offset on MCP; normalize to standard URDF 0.0 rad
-                    if self.hand_side == "left" and out_idx in (5, 9, 13, 17) and val < -0.5:
-                        val += np.deg2rad(90.0)
                     reordered[out_idx] = val
                     break
         self.latest_actual_joints = reordered

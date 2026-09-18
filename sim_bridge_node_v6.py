@@ -39,13 +39,7 @@ STATE_TOPIC = "/allegro_teleop/state"
 DEFAULT_ALPHA = 0.25
 DEFAULT_RATE = 100.0  # Hz (matches controller_manager 100Hz update_rate)
 
-# Left hand finger MCP joint indices in CONTROLLER_JOINT_ORDER:
-# joint11 (Index MCP) = index 5
-# joint21 (Middle MCP) = index 9
-# joint31 (Ring MCP) = index 13
-# joint41 (Pinky MCP) = index 17
-LEFT_MCP_JOINT_INDICES = (5, 9, 13, 17)
-MOTOR_OFFSET_90DEG = np.deg2rad(90.0)  # 1.5707963 rad
+
 
 BRIDGE_QOS = QoSProfile(
     reliability=QoSReliabilityPolicy.RELIABLE,
@@ -113,10 +107,7 @@ class SimBridgeNode(Node):
             f" | Mode: {self.mode.upper()} | Hand Side: {self.hand_side.upper()}"
             f" | Command Rate: {self.rate:.1f} Hz (Period: {timer_period*1000:.1f}ms) | EMA alpha={self.alpha:.2f}"
         )
-        if self.mode == "real" and self.hand_side == "left":
-            self.get_logger().info(
-                "⚡ [Vision2Real] Real Left Hand HW Motor Offset (-90 deg) ENABLED on joint11, joint21, joint31, joint41."
-            )
+
         self.get_logger().info(
             f"Expected joints count: {N_JOINTS} ({CONTROLLER_JOINT_ORDER[0]} ~ {CONTROLLER_JOINT_ORDER[-1]})"
         )
@@ -132,10 +123,7 @@ class SimBridgeNode(Node):
                 self.get_logger().info(
                     f"[UI HAND SWITCH] 🔄 Active Hand Model switched to: {self.hand_side.upper()} HAND in bridge"
                 )
-                if self.mode == "real" and self.hand_side == "left":
-                    self.get_logger().info(
-                        "⚡ [Vision2Real] Left Hand HW Motor Offset (-90 deg) ACTIVATED on joint11, joint21, joint31, joint41."
-                    )
+
         except Exception as e:
             self.get_logger().error(f"Failed to parse teleop_state message in bridge: {e}")
 
@@ -181,13 +169,8 @@ class SimBridgeNode(Node):
             lo, hi = JOINT_LIMITS[joint_name]
             self._filtered_angles[i] = np.clip(self._filtered_angles[i], lo, hi)
 
-        # 3. Apply Vision2Real Hardware Motor Offset if in Real Mode on Left Hand
-        # On Real Left Hand, motor 0 rad is at 90 deg curled, so -90 deg (-1.5708 rad)
-        # must be sent to the physical motor for fingers to open completely straight.
+        # 3. Target Command Vector (1:1 standard URDF kinematic alignment)
         cmd_data = self._filtered_angles.copy()
-        if self.mode == "real" and self.hand_side == "left":
-            for idx in LEFT_MCP_JOINT_INDICES:
-                cmd_data[idx] -= MOTOR_OFFSET_90DEG
 
         # Publish command to hardware position controller at constant high frequency
         cmd_msg = Float64MultiArray()
@@ -202,9 +185,8 @@ class SimBridgeNode(Node):
             md = self._filtered_angles[8:12]
             rg = self._filtered_angles[12:16]
             pk = self._filtered_angles[16:20]
-            offset_tag = " (⚡ HW Motor Offset -90° Applied)" if (self.mode == "real" and self.hand_side == "left") else ""
             self.get_logger().info(
-                f"[Output Rate: {self._actual_rate:.1f} Hz (Target: {self.rate:.0f} Hz) | EMA alpha={self.alpha:.2f} | Frame #{self._seq} | Mode: {self.mode.upper()}{offset_tag}]\n"
+                f"[Output Rate: {self._actual_rate:.1f} Hz (Target: {self.rate:.0f} Hz) | EMA alpha={self.alpha:.2f} | Frame #{self._seq} | Mode: {self.mode.upper()}]\n"
                 f"  Thumb : [{th[0]:+.3f}, {th[1]:+.3f}, {th[2]:+.3f}, {th[3]:+.3f}]\n"
                 f"  Index : [{ix[0]:+.3f}, {ix[1]:+.3f}, {ix[2]:+.3f}, {ix[3]:+.3f}]\n"
                 f"  Middle: [{md[0]:+.3f}, {md[1]:+.3f}, {md[2]:+.3f}, {md[3]:+.3f}]\n"
