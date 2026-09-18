@@ -141,6 +141,25 @@ cd /home/humble_ws && colcon build --symlink-install --packages-select allegro_h
 | `config/single_hand/allegro_hand_v6_1.urdf.xacro` | `allegro_hand_v6_1.ros2_control.xacro`를 include, `hand` 인자 전달 |
 | `config/single_hand/allegro_hand_v6_1.ros2_control.xacro` | 왼손 + hardware일 때 joint11/21/31/41의 `initial_value = -π/2` → 전원 인가 직후 브릿지가 뜨기 전에도 손가락이 펴진 자세로 시작 |
 
+### 3-2. v6_2: 콕핏 3D 뷰 GPU 렌더링 + 왼손 시점 수정
+
+| 항목 | v6_1 | v6_2 |
+|---|---|---|
+| 콕핏 3D 렌더링 | CPU (`LIBGL_ALWAYS_SOFTWARE=1`, llvmpipe) 약 50 ms/frame → UI 약 13 fps로 끊김 | NVIDIA GPU (PRIME render offload) 약 1.4 ms/frame |
+| 왼손 기본 시점 | azimuth +28° → 왼손 **손등**이 보여 오른손처럼 보임 | azimuth -152° → 오른손 뷰(-28°)의 거울상, 손바닥 쪽 |
+
+- 노트북 화면은 Intel iGPU가 구동하고 컨테이너에는 Intel Mesa 드라이버가 없어 기본 GL이 실패하므로, 콕핏 프로세스만 `__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia`로 NVIDIA에서 렌더링합니다. 컨테이너에서 `nvidia-smi`가 안 되면 CPU 렌더링으로 자동 복귀합니다. RViz(대시보드 모드)는 기존대로 CPU 렌더링입니다.
+- 3D 메쉬는 총 약 47.6만 삼각형(왼손 `meshes/left/`)입니다.
+- 새 파일: `run_teleop_v6_2.sh`, `run_cockpit_v6_2.sh`, `run_v6_2.sh`, `teleop_cockpit_v6_2.py`. 나머지 노드(bridge, retargeting, dashboard, recorder)는 v6_1을 그대로 사용합니다.
+- 콕핏 3D 뷰에서 엄지·검지 끝이 노랗게 변하는 것은 **핀치 표시**(카메라 속 엄지-검지 끝 거리 약 2.5 cm 미만)이며 로봇 제어와는 무관합니다.
+
+```bash
+./run_cockpit_v6_2.sh real      # 권장: 단일창 3D 콕핏
+./run_dashboard_v6_1.sh real    # 대시보드 + RViz2 (v6_2와 동일 동작)
+```
+
+**리타게팅 좌우 매핑**: 로봇 왼손은 작업자 왼손, 로봇 오른손은 작업자 오른손으로 조종합니다(카메라 영상은 좌우 반전 후 MediaPipe에 입력). 왼손/오른손 손가락 파이프라인은 서로 정확한 거울 대칭입니다(굽힘 동일, 벌림 부호 반대; 게인은 오른손 0.80 / 왼손 0.85로 개별 튜닝).
+
 ---
 
 ### 4. UI 실시간 양손 전환 및 모델 즉시 갱신 (Live UI & Model Sync)
@@ -277,7 +296,7 @@ docker exec -it ros_humble_dev bash -c "
 어디서든 간편하게 실행할 수 있도록 용도별 전용 런처 스크립트와 올인원 런처(`run_v6`)를 모두 제공합니다. 이전 버전(클래식 대시보드 + RViz2)과 신규 버전(단일 창 통합 3D 콕핏)을 필요에 따라 언제든 돌려가며 사용할 수 있습니다.
 
 > [!IMPORTANT]
-> **권장 버전은 v6_1입니다** (`*_v6_1.sh`, 변경점은 [3-1](#3-1-v6_1-좌표-변환-단일화-rviz-뒤로-꺾임--데이터셋-좌표-혼재-수정) 참고). 아래 v6 명령어의 `run_cockpit.sh` / `run_dashboard.sh` / `run_v6.sh`는 각각 `run_cockpit_v6_1.sh` / `run_dashboard_v6_1.sh` / `run_v6_1.sh`로 바꿔 쓰면 되며, 옵션은 동일합니다.
+> **권장 버전: 콕핏은 v6_2 (`run_cockpit_v6_2.sh`), 대시보드는 v6_1 (`run_dashboard_v6_1.sh`)** — 변경점은 [3-1](#3-1-v6_1-좌표-변환-단일화-rviz-뒤로-꺾임--데이터셋-좌표-혼재-수정), [3-2](#3-2-v6_2-콕핏-3d-뷰-gpu-렌더링--왼손-시점-수정) 참고. 아래 v6 명령어의 `run_cockpit.sh` / `run_dashboard.sh` / `run_v6.sh`는 각각 `run_cockpit_v6_2.sh` / `run_dashboard_v6_1.sh` / `run_v6_2.sh`로 바꿔 쓰면 되며, 옵션은 동일합니다.
 
 ### ✅ 실기 테스트 순서 (v6_1)
 
@@ -288,9 +307,9 @@ cd ~/humble_ws/allegro_vision_teleop
 
 ./check_hand.sh                       # 0) 통신·손 종류·엔코더 확인
 ./run_dashboard_v6_1.sh real          # 1) RViz: 켜자마자 손가락이 펴져 있고, 폈다/쥐었을 때 실물과 일치하는지
-./run_cockpit_v6_1.sh real            # 2) 콕핏: 3D 뷰가 실물을 지연 없이 따라가는지, Switch Hand 버튼이 비활성인지
+./run_cockpit_v6_2.sh real            # 2) 콕핏: 3D 뷰가 실물을 지연 없이 따라가는지, Switch Hand 버튼이 비활성인지
 ./run_dashboard_v6_1.sh sim           # 3) sim에서 H키: 대시보드와 RViz가 왼손↔오른손으로 함께 바뀌는지
-./run_v6_1.sh real --cockpit --record # 4) 데이터 수집: R 녹화 → S/F 태그, 에피소드 JSON의 state와 action이 같은 좌표(URDF)인지
+./run_v6_2.sh real --cockpit --record # 4) 데이터 수집: R 녹화 → S/F 태그, 에피소드 JSON의 state와 action이 같은 좌표(URDF)인지
 ./run_dashboard_v6_1.sh real --hand right  # 5) 자동 감지 실패 시 손 종류 수동 지정
 ```
 
