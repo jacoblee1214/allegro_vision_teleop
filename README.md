@@ -29,14 +29,20 @@
 
 ## 빠른 실행
 
-```bash
-cd ~/humble_ws/allegro_vision_teleop
+> **폴더 위치는 고정입니다.** 런처는 호스트에서 실행되면 컨테이너 안의 `/home/humble_ws/allegro_vision_teleop/`에서 자신을 다시 실행합니다. 따라서 이 저장소는 반드시 **`~/humble_ws/allegro_vision_teleop`** 에 두고, 컨테이너에는 `~/humble_ws`를 `/home/humble_ws`로 마운트해야 합니다([설치](#설치) 참고). 이 구조만 지키면 아래 명령은 어느 디렉토리에서 실행해도 동작합니다.
 
-./check_hand.sh                          # 로봇 통신·손 종류·엔코더 확인 (ROS 불필요)
-./run_cockpit_v6_3.sh real               # 콕핏 UI (권장)
-./run_dashboard_v6_1.sh real             # 대시보드 + RViz2
-./run_v6_3.sh real --cockpit --record    # 콕핏 + 데이터셋 녹화
-./run_cockpit_v6_3.sh sim --hand left    # 로봇 없이 시뮬레이션 (sim은 자동 감지가 없어 --hand 지정)
+```bash
+~/humble_ws/allegro_vision_teleop/check_hand.sh                          # 로봇 통신·손 종류·엔코더 확인 (ROS 불필요)
+~/humble_ws/allegro_vision_teleop/run_cockpit_v6_3.sh real               # 콕핏 UI (권장)
+~/humble_ws/allegro_vision_teleop/run_dashboard_v6_1.sh real             # 대시보드 + RViz2
+~/humble_ws/allegro_vision_teleop/run_v6_3.sh real --cockpit --record    # 콕핏 + 데이터셋 녹화
+~/humble_ws/allegro_vision_teleop/run_cockpit_v6_3.sh sim --hand left    # 로봇 없이 시뮬레이션 (sim은 자동 감지가 없어 --hand 지정)
+```
+
+컨테이너 안(`docker exec -it ros_humble_dev bash`)에서 실행할 때는 경로만 `/home/humble_ws/allegro_vision_teleop/...`로 바꿉니다.
+
+```bash
+/home/humble_ws/allegro_vision_teleop/run_cockpit_v6_3.sh real
 ```
 
 - `real` 모드에서는 손 종류가 자동 감지됩니다. 런처 로그의 `[✓] Hardware auto-detected hand type: ...` 줄로 확인하고, 감지에 실패하면 `--hand left|right`를 지정합니다. **왼손 로봇을 오른손 모드로 구동하면 손가락이 90° 굽혀지므로** 감지 결과를 꼭 확인하세요.
@@ -47,6 +53,18 @@ cd ~/humble_ws/allegro_vision_teleop
 ---
 
 ## 설치
+
+### 0. 폴더 구조
+```bash
+mkdir -p ~/humble_ws/src
+git clone https://github.com/jacoblee1214/allegro_vision_teleop.git ~/humble_ws/allegro_vision_teleop
+# Wonik Allegro Hand V6 ROS 2 패키지는 ~/humble_ws/src/allegro_hand_v6/ 에 둡니다 (3단계 참고)
+```
+```text
+~/humble_ws/                       → 컨테이너의 /home/humble_ws
+├── allegro_vision_teleop/         (이 저장소)
+└── src/allegro_hand_v6/           (Wonik 드라이버 패키지)
+```
 
 ### 1. 하드웨어 연결
 - 로봇에 24 V 전원을 연결합니다.
