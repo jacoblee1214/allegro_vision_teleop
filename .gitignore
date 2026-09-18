@@ -22,3 +22,12 @@ scratch/
 
 # Local symlinks
 meshes
+
+# Internal / dev-only files (kept locally, not published)
+HANDOFF_5FINGER_UPGRADE_PROMPT.md
+IROS_2026_Allegro_Teleop.pptx
+make_ppt.py
+run_gui.sh
+test_thumb_diag.py
+test_thumb_direct.py
+demo_thumb_poses.py
