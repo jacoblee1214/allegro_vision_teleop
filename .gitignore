@@ -1,0 +1,27 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ROS logs and artifacts
+log/
+*.log
+
+# Environments
+.env
+.venv/
+env/
+venv/
+
+# Recorded datasets
+data/
+
+# Local symlink to the driver package meshes
+meshes
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Scratch
+scratch/
