@@ -111,6 +111,7 @@ flowchart LR
 | `safety_utils.py` | 관절 순서·한계 정의 |
 | `tools/setup.sh` | 설치 스크립트 |
 | `tools/check_hand.py`, `check_hand.sh` | 로봇 통신 진단 (표준 라이브러리만 사용) |
+| `tools/detect_camera.py` | 카메라 자동 선택 (RealSense 우선, 흑백 전용 IR 노드 제외) |
 | `urdf/` | `allegro_hand_v6_{left,right}.urdf` 사본 (드라이버 패키지와 동일) |
 
 ---
@@ -271,8 +272,30 @@ nmcli con up allegro-hand
 **`ModuleNotFoundError: No module named 'mediapipe'`**
 - `.venv`가 없거나 런처가 시스템 python으로 폴백한 경우입니다. `./tools/setup.sh`를 한 번 실행하세요. 런처는 `.venv`가 없으면 경고를 찍고 진행합니다.
 
+**카메라 영상이 흑백으로 번쩍거림**
+- **IR 카메라를 잡은 경우입니다.** 이 노트북은 카메라 모듈 하나에 V4L2 노드 4개를 노출합니다.
+
+  | 노드 | 이름 | 포맷 | 용도 |
+  |---|---|---|---|
+  | `video0` | HP True Vision FHD | `MJPG`, `YUYV` | **RGB 스트림 (이것을 써야 함)** |
+  | `video1` | HP True Vision FHD | 없음 | 메타데이터 노드 |
+  | `video2` | HP True Vision IR | `GREY` | Windows Hello IR 센서 |
+  | `video3` | HP True Vision IR | 없음 | 메타데이터 노드 |
+
+  `video2`(IR)도 멀쩡히 캡처되기 때문에, `video0`이 점유된 상태에서 단순히 "첫 번째로 프레임이 나오는 장치"를 고르면 IR 센서가 선택됩니다. 8-bit 흑백에 IR 조명이 점멸해서 번쩍이는 화면이 됩니다.
+- 자동감지(`tools/detect_camera.py`)가 흑백 전용 장치를 제외하므로 지금은 발생하지 않습니다. 어떤 장치가 왜 걸러졌는지 보려면:
+  ```bash
+  ./tools/detect_camera.py --list
+  ```
+- `video0`이 점유되어 있으면 런처가 카메라 없음으로 종료합니다. 대개 이전 세션의 UI가 고아로 남은 경우입니다:
+  ```bash
+  pgrep -af teleop_          # 남아있는 UI 확인
+  ```
+
 **카메라가 안 켜짐 / `Device or resource busy`**
-- 이전 세션이 정상 종료되지 않아 장치를 잡고 있는 경우입니다. 런처는 시작할 때 남아 있는 텔레옵 UI 프로세스를 정리하지만, 안 되면 `--device <번호>`로 다른 장치를 지정하세요. 이 PC에는 `/dev/video0~3`이 있고 실제 캡처되는 장치는 `video0`입니다.
+- 런처는 시작할 때 남아 있는 텔레옵 UI를 정리하고, 다른 `run_teleop.sh`가 떠 있으면 경고합니다. **두 세션을 동시에 띄우지 마세요** — 하나의 `controller_manager`와 하나의 카메라를 두고 충돌합니다.
+- 터미널을 그냥 닫으면 런처의 정리 루틴이 돌지 않아 UI가 고아로 남습니다. 종료는 `Ctrl+C`로 하세요.
+- 특정 장치를 강제하려면 `--device <번호>`.
 
 **`RMW implementation not installed (expected 'rmw_cyclonedds_cpp')`**
 - `sudo apt install ros-jazzy-rmw-cyclonedds-cpp` 또는 `RMW_IMPLEMENTATION=` 를 비운 채로 실행하세요. 런처는 CycloneDDS가 없으면 자동으로 기본 rmw를 씁니다.

@@ -168,57 +168,38 @@ if [ ! -x "$PY" ]; then
     PY="python3"
 fi
 
-# Release camera locks held by an earlier run that did not exit cleanly.
-pkill -f "$REPO_DIR/(teleop_cockpit|teleop_dashboard|vision_tracker)\.py" 2>/dev/null || true
-sleep 0.2
+# Release camera locks held by an earlier run that did not exit cleanly. A UI killed
+# without its launcher's trap (closing the terminal, SIGKILL) survives as an orphan and
+# keeps the camera open, which used to push the auto-detect onto the IR sensor. Say so
+# out loud instead of silently reaping, because an orphan also means the previous
+# session's ros2_control may still be driving the hand.
+STALE_UI_PATTERN="$REPO_DIR/(teleop_cockpit|teleop_dashboard|vision_tracker)\.py"
+STALE_PIDS=$(pgrep -f "$STALE_UI_PATTERN" || true)
+if [ -n "$STALE_PIDS" ]; then
+    echo "[!] Teleop UI already running (pid: $(echo "$STALE_PIDS" | tr '\n' ' ')); stopping it first."
+    kill -INT $STALE_PIDS 2>/dev/null || true
+    for _ in 1 2 3 4 5 6; do
+        sleep 0.5
+        pgrep -f "$STALE_UI_PATTERN" >/dev/null || break
+    done
+    STALE_PIDS=$(pgrep -f "$STALE_UI_PATTERN" || true)
+    [ -n "$STALE_PIDS" ] && kill -KILL $STALE_PIDS 2>/dev/null || true
+    if pgrep -f "$REPO_DIR/run_teleop\.sh" | grep -qv "^$$\$"; then
+        echo "[!] Another run_teleop.sh is still up. Two sessions share one"
+        echo "[!] controller_manager and one camera; stop the other terminal first."
+    fi
+    sleep 0.5
+fi
 
 # ------------------------------------------------------------------------------
-# Camera selection (RealSense RGB first, then the first device that really captures)
+# Camera selection. tools/detect_camera.py prefers an Intel RealSense RGB stream and
+# rejects greyscale-only nodes: this laptop's Windows Hello IR sensor (/dev/video2)
+# captures perfectly well, so a naive "first device that returns a frame" probe picks
+# it whenever the RGB node is busy and the operator gets a flickering mono image.
 # ------------------------------------------------------------------------------
 if [ -z "${DEVICE:-}" ]; then
-    DETECTED_DEV=$("$PY" -c "
-import glob, subprocess
-import cv2
-
-def idx_of(path):
-    tail = path.replace('/dev/video', '')
-    return int(tail) if tail.isdigit() else 999
-
-devs = sorted(glob.glob('/dev/video*'), key=idx_of)
-
-for dev in devs:
-    try:
-        out = subprocess.check_output(['v4l2-ctl', '-d', dev, '--all'],
-                                      stderr=subprocess.DEVNULL, timeout=0.5).decode('utf-8', 'ignore')
-        if 'RealSense' in out and ('YUYV' in out or 'white_balance' in out):
-            print('realsense:%d' % idx_of(dev))
-            raise SystemExit(0)
-    except SystemExit:
-        raise
-    except Exception:
-        pass
-
-for dev in devs:
-    idx = idx_of(dev)
-    try:
-        cap = cv2.VideoCapture(idx)
-        if cap.isOpened():
-            ret, frame = cap.read()
-            cap.release()
-            if ret and frame is not None and frame.size > 0:
-                name = 'Camera'
-                try:
-                    with open('/sys/class/video4linux/video%d/name' % idx) as fh:
-                        name = fh.read().strip()
-                except Exception:
-                    pass
-                print('%s:%d' % (name, idx))
-                raise SystemExit(0)
-    except SystemExit:
-        raise
-    except Exception:
-        pass
-" 2>/dev/null || true)
+    echo "[*] Detecting camera..."
+    DETECTED_DEV=$("$PY" "$REPO_DIR/tools/detect_camera.py" || true)
 
     if [[ "$DETECTED_DEV" =~ realsense:([0-9]+) ]]; then
         DEVICE="${BASH_REMATCH[1]}"
@@ -227,8 +208,11 @@ for dev in devs:
         DEVICE="${BASH_REMATCH[2]}"
         CAM_DESC="${BASH_REMATCH[1]} (/dev/video$DEVICE [auto])"
     else
-        DEVICE="0"
-        CAM_DESC="Default camera (/dev/video0) — auto-detect found nothing"
+        echo "[!] No usable colour camera found."
+        echo "[!] Run './tools/detect_camera.py --list' to see why each node was skipped,"
+        echo "[!] or pass --device <n> to force one. A teleop UI left over from an earlier"
+        echo "[!] run holds the camera open; check with: pgrep -af teleop_"
+        exit 1
     fi
 else
     CAM_DESC="/dev/video$DEVICE (user specified)"

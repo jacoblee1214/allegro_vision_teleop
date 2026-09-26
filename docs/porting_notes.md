@@ -72,6 +72,12 @@ V4(4지, SocketCAN) 런처와 노드는 가져오지 않았습니다. 이 PC의 
 
    신호 경로 자체는 정상이었습니다. `/allegro/teleop_state`로 clutch를 직접 publish하면 리타게팅 노드가 `[CLUTCH] ⏸ ENGAGED`/`▶ RELEASED`로 정확히 반응하고, `--record`로 띄운 뒤 record→tag를 publish하면 301프레임(3.01 s @ 100 Hz) 에피소드가 JSON + manifest로 저장됩니다.
 
+6. **IR 카메라가 선택되는 문제** — 원본의 카메라 자동감지는 "RealSense가 있으면 그것, 없으면 프레임이 나오는 첫 장치"입니다. 이 노트북은 카메라 모듈 하나에 노드 4개(`video0` RGB `MJPG`/`YUYV`, `video1` 메타데이터, `video2` IR `GREY`, `video3` 메타데이터)를 노출하고 **IR 센서도 정상 캡처됩니다**. 그래서 `video0`이 점유된 상태(이전 UI가 고아로 남은 경우 등)에서는 조용히 `video2`가 선택되고, 8-bit 흑백에 IR 조명 점멸이 겹쳐 화면이 번쩍입니다.
+
+   인라인 셸 안의 파이썬을 `tools/detect_camera.py`로 분리하고, `v4l2-ctl --list-formats`로 **흑백 전용(FourCC가 `GREY`/`Y8`/`Y16` 등뿐인) 장치를 제외**하도록 했습니다. `--list`로 각 노드가 왜 선택/제외됐는지 볼 수 있습니다. 쓸 수 있는 컬러 카메라가 없으면 엉뚱한 장치로 떨어지지 않고 명확한 메시지와 함께 종료합니다.
+
+   함께 고친 것: 런처의 고아 UI 정리가 조용히 `pkill`만 하던 것을, 어떤 PID를 정리했는지 알리고 다른 `run_teleop.sh`가 떠 있으면 경고하도록 바꿨습니다(두 세션이 `controller_manager`와 카메라를 공유하면 충돌). 터미널을 그냥 닫으면 트랩이 안 돌아 UI가 고아로 남는 것이 애초 원인이었습니다.
+
 ### 환경 메모
 
 - `ros-jazzy-rmw-cyclonedds-cpp` 설치 완료. 런처가 자동으로 선택합니다.
