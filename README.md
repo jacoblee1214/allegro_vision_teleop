@@ -222,6 +222,9 @@ UI 창이 활성화된 상태에서 사용합니다.
 - `joint_states_topic`으로 `robot_state_publisher`가 `/allegro/joint_states_urdf`를 읽게 합니다. 왼손 MCP 오프셋 때문에 필요합니다.
 - 촉각 릴레이 / 대시보드 / 포즈 GUI 노드는 띄우지 않습니다 (MANUS 데모용).
 - 컨트롤러 spawner 타임아웃을 60초로 늘렸습니다. Modbus 하드웨어 초기화가 ~9초 걸려서 기본 10초로는 콜드 스타트 때 `joint_state_broadcaster`가 실패합니다.
+- `world → base_link` 정적 변환이 항등입니다. Wonik 브링업은 `pitch = -π/2`를 써서 손가락이 눕고 엄지만 위를 향하는데, `base_link`에서 +Z가 손가락 방향이라 항등 회전이어야 RViz에서 손이 선 자세로 보입니다.
+
+> 이 저장소는 **오른손 전용**으로 운용합니다. 왼손 코드 경로(MCP −π/2 오프셋)는 그대로 남아 있지만 이 PC에서는 쓰지 않습니다.
 
 ---
 

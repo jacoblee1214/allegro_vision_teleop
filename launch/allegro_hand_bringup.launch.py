@@ -66,6 +66,14 @@ def generate_launch_description() -> LaunchDescription:
     rviz_config = PathJoinSubstitution([description_share, "rviz", "allegro_hand_v6.rviz"])
 
     # RViz's fixed frame is `world`; the hand URDF root is `base_link`.
+    #
+    # In base_link the four fingers sit at z = +0.076..+0.104 and the thumb at x = +0.052,
+    # so +Z is the finger direction and +X is the thumb side. The identity rotation
+    # therefore stands the hand up with the fingers pointing at world +Z.
+    #
+    # The Wonik bring-up uses pitch = -pi/2 here, which rotates base +Z onto world -X:
+    # the fingers lie flat and only the thumb points up. That suits a hand mounted on an
+    # arm, but for this teleop the upright view is what the operator needs.
     static_tf = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
@@ -73,7 +81,7 @@ def generate_launch_description() -> LaunchDescription:
         output="log",
         arguments=[
             "--x", "0", "--y", "0", "--z", "0",
-            "--roll", "0", "--pitch", "-1.5707963", "--yaw", "0",
+            "--roll", "0", "--pitch", "0", "--yaw", "0",
             "--frame-id", "world",
             "--child-frame-id", "base_link",
         ],

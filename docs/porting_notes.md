@@ -58,13 +58,15 @@ V4(4지, SocketCAN) 런처와 노드는 가져오지 않았습니다. 이 PC의 
 | 콕핏 UI | 카메라·MediaPipe·3D STL 손·20축 게이지 전부 정상, 실물 피드백 반영 |
 | CycloneDDS | 설치 후 `rmw_cyclonedds_cpp`로 자동 선택됨 |
 
-왼손 실기(MCP −π/2 오프셋 경로)는 여전히 미검증입니다. 이 PC에 연결된 하드웨어가 오른손입니다.
+이 셋업은 오른손 전용입니다. 왼손은 연결하지 않습니다.
 
 ### 검증 중 발견해 고친 것
 
 1. **Qt 플랫폼 플러그인 충돌** — `opencv-contrib-python` 휠이 import 시점에 `QT_QPA_PLATFORM_PLUGIN_PATH`를 자기 번들 Qt5(`cv2/qt/plugins`)로 **무조건** 덮어씁니다. 그 플러그인은 cv2 번들 Qt5에 링크돼 있어 apt PyQt5가 못 읽고, `QApplication` 생성이 `Could not load the Qt platform plugin "xcb"`로 죽습니다. 환경변수를 미리 export해도 cv2가 덮어쓰므로 소용없어서, `teleop_cockpit.py`·`teleop_dashboard.py`에서 cv2 import 직후 cv2가 설정한 값만 제거합니다. 두 파일은 PyQt5로 그리고 `cv2.imshow`를 쓰지 않으므로 잃는 기능은 없습니다(`vision_tracker.py`는 imshow를 쓰므로 건드리지 않음).
 2. **`tools/setup.sh`의 `set -u`** — ROS 2 `setup.bash`가 `AMENT_TRACE_SETUP_FILES` 등 미설정 변수를 읽어서 nounset이 켜져 있으면 source 순간 스크립트가 죽습니다. source 구간마다 `set +u`/`set -u`로 감쌌고, 의존성 검증이 실패해도 마지막 안내가 나오도록 `set -e` 조기 종료도 없앴습니다.
 3. **런처 종료 처리** — `teleop_cockpit.py`는 종료 시 rclpy 컨텍스트가 사라진 뒤 Qt 타이머가 한 번 더 publish하면서 멈추는 경우가 있고, `ros2 launch`는 자식 정리에 수 초가 걸립니다. 기존 cleanup은 0.5초 뒤 바로 SIGTERM을 보내서 `ros2 launch`를 죽여 `ros2_control_node`를 고아로 남겼습니다(**`real` 모드에서 런처 종료 후에도 손이 제어 상태로 남음**). SIGINT → 최대 8초 대기 → SIGTERM → SIGKILL 순서로 바꾸고, 브링업을 `setsid`로 별도 프로세스 그룹에 띄워 그룹 단위로 정리합니다. 수정 후 잔여 프로세스 0, 종료 12초.
+
+4. **RViz 손 자세** — `world → base_link` 정적 변환이 Wonik 브링업과 같은 `pitch = -π/2`였습니다. `base_link`에서 +Z가 손가락 방향, +X가 엄지 방향이라 이 회전은 손가락을 world −X로 눕히고 엄지만 위로 세웁니다(팔에 장착한 손에는 맞지만 텔레옵 화면으로는 부적절). 항등 회전으로 바꿔 손이 선 자세가 되게 했습니다. 관절 0 자세에서 TF로 확인: 검지/중지/소지 끝 z = +0.183 / +0.196 / +0.164, 엄지 끝 x = +0.132.
 
 ### 환경 메모
 
