@@ -21,7 +21,9 @@ REPO_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 cd "$REPO_DIR"
 
 # shellcheck source=/dev/null
+set +u
 [ -f config/teleop.env ] && source config/teleop.env
+set -u
 
 DO_APT=true
 DO_VENV=true
@@ -94,14 +96,19 @@ fi
 
 # ------------------------------------------------------------------ 4. verify
 echo "[4/4] Verifying environment..."
+# ROS 2's setup.bash reads unset variables (AMENT_TRACE_SETUP_FILES and friends), which
+# `set -u` turns into a fatal error, so nounset is lifted around every source.
+set +u
 # shellcheck source=/dev/null
 source "${ROS_SETUP:-/opt/ros/jazzy/setup.bash}"
 WS_SETUP="${ALLEGRO_WS:-$HOME/v6f_manuse_teleoperation}/install/setup.bash"
 if [ -f "$WS_SETUP" ]; then
     # shellcheck source=/dev/null
     source "$WS_SETUP"
+    set -u
     echo "      driver workspace sourced: $WS_SETUP"
 else
+    set -u
     echo "      [!] $WS_SETUP not found. Build the Wonik driver packages first:"
     echo "          cd ${ALLEGRO_WS:-$HOME/v6f_manuse_teleoperation} && colcon build --symlink-install"
 fi
@@ -116,7 +123,7 @@ done
 
 PYBIN="./.venv/bin/python"
 [ -x "$PYBIN" ] || PYBIN="python3"
-"$PYBIN" - <<'PYEOF'
+if "$PYBIN" - <<'PYEOF'
 import importlib, sys
 print(f"      python      {sys.version.split()[0]}  ({sys.executable})")
 ok = True
@@ -139,6 +146,11 @@ except Exception as exc:
     print(f"      [!!] {'PyQt5 QOpenGLWidget':<28} {type(exc).__name__}: {exc}")
 sys.exit(0 if ok else 1)
 PYEOF
+then
+    echo "      all python dependencies OK"
+else
+    echo "      [!!] some python dependencies are missing (see above)"
+fi
 
 echo "========================================================"
 echo " Setup done. Next:"

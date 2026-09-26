@@ -249,18 +249,65 @@ echo "========================================================"
 
 PIDS=()
 
+# Shutdown is SIGINT -> grace period -> SIGTERM -> SIGKILL, in that order and with a real
+# wait in between: `ros2 launch` needs several seconds to bring its own children down, and
+# TERMing it early leaves ros2_control_node running, which in `real` mode means the hand
+# stays under control after the launcher is gone. The final KILL is not optional either,
+# because teleop_cockpit.py can deadlock on exit (its Qt timer publishes once more after
+# rclpy's context is gone: "publisher's context is invalid").
+BRINGUP_PGID=""
+
+# Signal every recorded pid, plus the bring-up's process group.
+signal_all() {
+    local sig="$1" pid
+    for pid in "${PIDS[@]}"; do
+        kill -0 "$pid" 2>/dev/null && kill "-$sig" "$pid" 2>/dev/null || true
+    done
+    [ -n "$BRINGUP_PGID" ] && kill "-$sig" "-$BRINGUP_PGID" 2>/dev/null || true
+    return 0
+}
+
+# Number of recorded pids still alive.
+count_alive() {
+    local pid n=0
+    for pid in "${PIDS[@]}"; do
+        kill -0 "$pid" 2>/dev/null && n=$((n + 1))
+    done
+    echo "$n"
+}
+
+# Wait up to $1 seconds for every recorded pid to exit.
+wait_for_exit() {
+    local limit="$1" waited=0
+    while [ "$waited" -lt "$limit" ]; do
+        [ "$(count_alive)" -eq 0 ] && return 0
+        sleep 1
+        waited=$((waited + 1))
+    done
+    return 1
+}
+
 cleanup() {
+    trap - SIGINT SIGTERM EXIT
     echo ""
     echo "[!] Stopping all teleoperation nodes..."
+
+    signal_all INT
+    if ! wait_for_exit 8; then
+        echo "[*] Still running after SIGINT; sending SIGTERM."
+        signal_all TERM
+        wait_for_exit 3 || true
+    fi
+
+    local pid
     for pid in "${PIDS[@]}"; do
-        kill -0 "$pid" 2>/dev/null && kill -INT "$pid" 2>/dev/null || true
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "[!] pid $pid did not exit; sending SIGKILL."
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
     done
-    sleep 0.5
-    for pid in "${PIDS[@]}"; do
-        kill -0 "$pid" 2>/dev/null && kill -TERM "$pid" 2>/dev/null || true
-    done
-    pkill -P $$ 2>/dev/null || true
-    wait 2>/dev/null || true
+    [ -n "$BRINGUP_PGID" ] && kill -KILL "-$BRINGUP_PGID" 2>/dev/null || true
+    pkill -KILL -P $$ 2>/dev/null || true
     echo "[OK] All nodes stopped."
 }
 trap cleanup SIGINT SIGTERM EXIT
@@ -270,12 +317,13 @@ BRINGUP="$REPO_DIR/launch/allegro_hand_bringup.launch.py"
 case "$MODE" in
     sim)
         echo "[1/4] Launching mock_components bring-up ($HAND_SIDE hand, rviz:=$USE_RVIZ)..."
-        ros2 launch "$BRINGUP" \
+        setsid ros2 launch "$BRINGUP" \
             hardware:=mock_components \
             hand:="$HAND_SIDE" \
             rviz:="$USE_RVIZ" \
             joint_states_topic:=/allegro/joint_states_urdf &
         PIDS+=($!)
+        BRINGUP_PGID=$!   # setsid makes the child its own group leader, so PGID == PID
         sleep 3
         ;;
     real)
@@ -361,7 +409,7 @@ except Exception:
         fi
 
         echo "[1/4] Launching hardware bring-up ($DESCRIPTOR, hand:=$HAND_SIDE, rviz:=$USE_RVIZ)..."
-        ros2 launch "$BRINGUP" \
+        setsid ros2 launch "$BRINGUP" \
             hardware:=hardware \
             descriptor:="$DESCRIPTOR" \
             hand_id:="${HAND_ID:-1}" \
@@ -369,6 +417,7 @@ except Exception:
             rviz:="$USE_RVIZ" \
             joint_states_topic:=/allegro/joint_states_urdf &
         PIDS+=($!)
+        BRINGUP_PGID=$!   # setsid makes the child its own group leader, so PGID == PID
         sleep 3
         ;;
     nodes)

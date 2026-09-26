@@ -234,6 +234,18 @@ UI 창이 활성화된 상태에서 사용합니다.
 2. `ip addr show enp129s0` — PC가 로봇과 같은 서브넷의 **다른** 주소를 가져야 합니다. PC에 `192.168.1.100`을 주면 자기 ping에 자기가 답해서 로봇이 안 보입니다.
 3. `ping 192.168.1.100`이 응답하면 런처를 다시 실행
 
+**PC에 `192.168.1.x` 주소가 없을 때**
+
+런처의 `ip addr add`는 root 권한이 필요해서 일반 사용자로 실행하면 조용히 실패합니다. NetworkManager 프로필로 한 번만 만들어 두면 됩니다(sudo 불필요).
+
+```bash
+nmcli con add type ethernet ifname enp129s0 con-name allegro-hand \
+      ipv4.method manual ipv4.addresses 192.168.1.10/24 ipv6.method ignore
+nmcli con up allegro-hand
+```
+
+이 PC에는 `allegro-hand` 프로필이 이미 만들어져 있습니다. 케이블을 다시 꽂은 뒤 주소가 없으면 `nmcli con up allegro-hand`만 실행하세요.
+
 **`Package 'allegro_hand_v6_bringup' not found`**
 - 드라이버 워크스페이스가 빌드되지 않았습니다. `cd ~/v6f_manuse_teleoperation && colcon build --symlink-install`
 

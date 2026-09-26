@@ -77,6 +77,17 @@ from scipy.spatial.transform import Rotation as R
 import OpenGL.GL as gl
 
 import cv2
+
+# The opencv-contrib-python wheel unconditionally repoints QT_QPA_PLATFORM_PLUGIN_PATH at
+# its own bundled Qt5 plugins (cv2/qt/plugins) when cv2 is imported. Those plugins link
+# against cv2's bundled Qt5, so the apt PyQt5 this UI runs on cannot load them and
+# QApplication aborts with 'Could not load the Qt platform plugin "xcb"'. Drop the
+# override so Qt falls back to the system plugin path it was compiled with. Only cv2's
+# own value is removed, so an explicitly exported path still wins. This file uses PyQt5
+# for display and never calls cv2.imshow, so cv2 loses nothing.
+for _cv2_qt_var in ("QT_QPA_PLATFORM_PLUGIN_PATH", "QT_QPA_FONTDIR"):
+    if "cv2" in os.environ.get(_cv2_qt_var, ""):
+        del os.environ[_cv2_qt_var]
 import mediapipe as mp
 import numpy as np
 

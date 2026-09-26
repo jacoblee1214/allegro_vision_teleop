@@ -45,6 +45,29 @@ V4(4지, SocketCAN) 런처와 노드는 가져오지 않았습니다. 이 PC의 
 | `./run_teleop.sh sim --headless` | `/vision_tracker`, `/kinematic_retargeting_node`, `/sim_bridge_node` + 컨트롤러 기동. 토픽 `/allegro/vision/landmarks`, `/allegro/target_joints`, `/allegro/joint_states_urdf`, `/allegro/teleop_state`, `/allegro/camera/image_raw`, `/allegro_hand_position_controller/commands` 확인. `Ctrl+C`/SIGTERM에서 자식 프로세스 전부 정리됨 |
 | 카메라 자동 감지 | `/dev/video0` (HP True Vision FHD) 선택 |
 
-아직 확인하지 않은 것: **실물 하드웨어(`real` 모드)**. 로봇이 연결되어 있지 않았습니다(`enp129s0` NO-CARRIER). 손 종류 자동 감지와 왼손 MCP 오프셋 경로는 실물에서 확인해야 합니다.
+### 실물 하드웨어 검증 (2026-09-27, 오른손 실기)
 
-미설치 apt 패키지: `ros-jazzy-rmw-cyclonedds-cpp` (sudo 필요). 런처는 없으면 기본 rmw로 진행하므로 실행은 됩니다. `./tools/setup.sh`를 한 번 돌리면 설치됩니다.
+| 항목 | 결과 |
+|---|---|
+| `./check_hand.sh` | 오른손 · 펌웨어 `0x0300` (v3.0) · 20축 엔코더 정상 |
+| `./run_cockpit.sh real` — 손 종류 자동 감지 | 레지스터 `0x0071` → `right` 정확히 감지 |
+| Modbus 하드웨어 인터페이스 | `AllegroHandV6System` 플러그인으로 `192.168.1.100:502` 연결 성공, `activate` 성공 |
+| 컨트롤러 | `joint_state_broadcaster`, `allegro_hand_position_controller` 둘 다 **active** |
+| 피드백 | `/allegro/joint_states_urdf` 100.0 Hz |
+| 명령 ↔ 실물 추종 오차 | 평균 0.024 rad (1.4°), 최대 0.140 rad (8.0°) — 동작 중 위치 제어 추종 오차 범위 |
+| 콕핏 UI | 카메라·MediaPipe·3D STL 손·20축 게이지 전부 정상, 실물 피드백 반영 |
+| CycloneDDS | 설치 후 `rmw_cyclonedds_cpp`로 자동 선택됨 |
+
+왼손 실기(MCP −π/2 오프셋 경로)는 여전히 미검증입니다. 이 PC에 연결된 하드웨어가 오른손입니다.
+
+### 검증 중 발견해 고친 것
+
+1. **Qt 플랫폼 플러그인 충돌** — `opencv-contrib-python` 휠이 import 시점에 `QT_QPA_PLATFORM_PLUGIN_PATH`를 자기 번들 Qt5(`cv2/qt/plugins`)로 **무조건** 덮어씁니다. 그 플러그인은 cv2 번들 Qt5에 링크돼 있어 apt PyQt5가 못 읽고, `QApplication` 생성이 `Could not load the Qt platform plugin "xcb"`로 죽습니다. 환경변수를 미리 export해도 cv2가 덮어쓰므로 소용없어서, `teleop_cockpit.py`·`teleop_dashboard.py`에서 cv2 import 직후 cv2가 설정한 값만 제거합니다. 두 파일은 PyQt5로 그리고 `cv2.imshow`를 쓰지 않으므로 잃는 기능은 없습니다(`vision_tracker.py`는 imshow를 쓰므로 건드리지 않음).
+2. **`tools/setup.sh`의 `set -u`** — ROS 2 `setup.bash`가 `AMENT_TRACE_SETUP_FILES` 등 미설정 변수를 읽어서 nounset이 켜져 있으면 source 순간 스크립트가 죽습니다. source 구간마다 `set +u`/`set -u`로 감쌌고, 의존성 검증이 실패해도 마지막 안내가 나오도록 `set -e` 조기 종료도 없앴습니다.
+3. **런처 종료 처리** — `teleop_cockpit.py`는 종료 시 rclpy 컨텍스트가 사라진 뒤 Qt 타이머가 한 번 더 publish하면서 멈추는 경우가 있고, `ros2 launch`는 자식 정리에 수 초가 걸립니다. 기존 cleanup은 0.5초 뒤 바로 SIGTERM을 보내서 `ros2 launch`를 죽여 `ros2_control_node`를 고아로 남겼습니다(**`real` 모드에서 런처 종료 후에도 손이 제어 상태로 남음**). SIGINT → 최대 8초 대기 → SIGTERM → SIGKILL 순서로 바꾸고, 브링업을 `setsid`로 별도 프로세스 그룹에 띄워 그룹 단위로 정리합니다. 수정 후 잔여 프로세스 0, 종료 12초.
+
+### 환경 메모
+
+- `ros-jazzy-rmw-cyclonedds-cpp` 설치 완료. 런처가 자동으로 선택합니다.
+- 유선 인터페이스에 NetworkManager 프로필 `allegro-hand`(192.168.1.10/24, enp129s0)를 만들어 뒀습니다. 런처 안의 `ip addr add`는 root가 필요해 일반 사용자로는 조용히 실패하므로, 주소가 없으면 `nmcli con up allegro-hand`로 올리세요.
+- 검증 중 `/var/crash`에 `_opt_ros_jazzy_bin_ros2.crash`가 생겼는데, `timeout`으로 강제 종료한 `ros2 topic hz` / `ros2 control list_controllers` CLI가 CycloneDDS 종료 중 죽은 것입니다. 텔레옵 노드와는 무관합니다.
