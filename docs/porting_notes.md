@@ -68,6 +68,10 @@ V4(4지, SocketCAN) 런처와 노드는 가져오지 않았습니다. 이 PC의 
 
 4. **RViz 손 자세** — `world → base_link` 정적 변환이 Wonik 브링업과 같은 `pitch = -π/2`였습니다. `base_link`에서 +Z가 손가락 방향, +X가 엄지 방향이라 이 회전은 손가락을 world −X로 눕히고 엄지만 위로 세웁니다(팔에 장착한 손에는 맞지만 텔레옵 화면으로는 부적절). 항등 회전으로 바꿔 손이 선 자세가 되게 했습니다. 관절 0 자세에서 TF로 확인: 검지/중지/소지 끝 z = +0.183 / +0.196 / +0.164, 엄지 끝 x = +0.132.
 
+5. **단축키가 먹통이 되는 문제** — `C`/`R`/`S`/`F`/`H`는 메인 윈도우의 `keyPressEvent`로만 처리됐습니다. 그런데 에피소드 목록 `QTableWidget`은 출력 가능한 키를 keyboard-search로 **소비**하기 때문에, 표를 한 번 클릭해 포커스가 가면 그 뒤로 모든 단축키가 조용히 죽습니다(시작 직후엔 버튼에 포커스가 있어 동작하다가 갑자기 안 되는 증상). 오프스크린 Qt 테스트로 재현 확인: 버튼/라벨 포커스에서는 메인 윈도우가 키를 받지만 표 포커스에서는 전혀 받지 못합니다. `Qt.ApplicationShortcut` 컨텍스트의 `QShortcut`으로 바꿔 포커스 위치와 무관하게 동작하게 했고(키를 먼저 소비하므로 `keyPressEvent`와 이중 실행되지 않음), 표는 `setFocusPolicy(Qt.NoFocus)`로 탭 순서에서도 뺐습니다.
+
+   신호 경로 자체는 정상이었습니다. `/allegro/teleop_state`로 clutch를 직접 publish하면 리타게팅 노드가 `[CLUTCH] ⏸ ENGAGED`/`▶ RELEASED`로 정확히 반응하고, `--record`로 띄운 뒤 record→tag를 publish하면 301프레임(3.01 s @ 100 Hz) 에피소드가 JSON + manifest로 저장됩니다.
+
 ### 환경 메모
 
 - `ros-jazzy-rmw-cyclonedds-cpp` 설치 완료. 런처가 자동으로 선택합니다.

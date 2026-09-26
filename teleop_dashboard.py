@@ -41,7 +41,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import QCoreApplication, Qt, QTimer
 if os.path.exists("/usr/lib/x86_64-linux-gnu/qt5/plugins"):
     QCoreApplication.setLibraryPaths(["/usr/lib/x86_64-linux-gnu/qt5/plugins"])
-from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPalette, QPixmap
+from PyQt5.QtGui import QColor, QFont, QImage, QKeySequence, QPainter, QPalette, QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
     QFrame,
@@ -57,6 +57,7 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
+    QShortcut,
 )
 
 import cv2
@@ -392,6 +393,7 @@ class TeleopDashboardWindow(QMainWindow):
 
         # Build UI
         self.init_ui()
+        self.install_shortcuts()
 
         # Update Timer (60Hz)
         self.timer = QTimer(self)
@@ -645,6 +647,7 @@ class TeleopDashboardWindow(QMainWindow):
         cockpit_layout.addLayout(history_box)
 
         self.table_episodes = QTableWidget(0, 4)
+        self.table_episodes.setFocusPolicy(Qt.NoFocus)
         self.table_episodes.setHorizontalHeaderLabels(["Episode ID", "Tag", "Frames", "Duration"])
         self.table_episodes.horizontalHeader().setStretchLastSection(True)
         self.table_episodes.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -654,6 +657,32 @@ class TeleopDashboardWindow(QMainWindow):
 
         right_layout.addWidget(cockpit_box, stretch=3)
         main_layout.addLayout(right_layout, stretch=2)
+
+    def install_shortcuts(self) -> None:
+        """Bind C/R/S/F/H/Q as application-wide shortcuts.
+
+        keyPressEvent on the main window is not enough: QTableWidget (the episode list)
+        treats printable keys as its keyboard-search and accepts them, so once the table
+        takes focus every shortcut silently stops working. An ApplicationShortcut is
+        matched before the key is delivered to the focused widget, so it fires whichever
+        child has focus -- and because it consumes the key, keyPressEvent below does not
+        run twice for the same press.
+        """
+        bindings = (
+            (Qt.Key_C, self.toggle_clutch),
+            (Qt.Key_R, self.toggle_record),
+            (Qt.Key_S, self.tag_success),
+            (Qt.Key_F, self.tag_fail),
+            (Qt.Key_H, self.toggle_hand),
+            (Qt.Key_Q, self.close),
+            (Qt.Key_Escape, self.close),
+        )
+        self._shortcuts = []
+        for key, slot in bindings:
+            sc = QShortcut(QKeySequence(key), self)
+            sc.setContext(Qt.ApplicationShortcut)
+            sc.activated.connect(slot)
+            self._shortcuts.append(sc)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         """Global key listener for C, R, S, F, H, Q shortcuts."""
