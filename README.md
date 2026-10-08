@@ -53,8 +53,14 @@ mkdir -p ~/v6f_manuse_teleoperation/src
 # 원익 드라이버 패키지를 ~/v6f_manuse_teleoperation/src 아래에 둔다
 cd ~/v6f_manuse_teleoperation
 rosdep install --from-paths src --ignore-src -y
-colcon build --symlink-install
+colcon build --symlink-install --base-paths src
 ```
+
+빌드가 실패하면 다음을 확인합니다.
+
+- **`--base-paths src`**: 3단계의 `V6_Teleoperation` 을 이 워크스페이스 안에 두면, 이 옵션 없이는 colcon이 그 안의 URDF 내보내기 패키지(`V6_Force_R` 등)까지 빌드하려다 실패합니다.
+- **conda / miniforge**: `No module named 'catkin_pkg'` 가 나오고 오류에 conda 파이썬 경로가 보이면, CMake가 시스템 파이썬 대신 conda 파이썬을 잡은 것입니다. `conda deactivate` 를 하고 `VIRTUAL_ENV` 도 비운 셸에서 `build/` `install/` `log/` 를 지우고 다시 빌드합니다.
+- **빠진 파일**: 드라이버 소스를 git으로 받으면 빈 `allegro_hand_v6_description/usd/` 폴더가 빠져 설치 단계가 실패합니다(`mkdir` 로 만들면 됩니다). RViz에 `Could not load resource …/Finger01_Link01.STL` 이 뜨면 `meshes/` 에 `Finger0X_Link0Y.STL`, `Palm.STL` 이 있는지 확인합니다.
 
 워크스페이스 위치가 다르면 `config/teleop.env` 의 `ALLEGRO_WS` 를 바꿉니다.
 
@@ -131,12 +137,12 @@ PC 유선 랜을 로봇과 같은 서브넷으로 설정합니다(예: `192.168.
 
 ### 압력센서 화면 (v3)
 
-V6의 18개 압력센서(손가락마다 3개, 손바닥 3개)를 V6 손바닥 렌더 위에 표시합니다. 원익 `allegro_hand_sensor_visualizer` 와 같은 구성(검은 배경, 손 이미지, 원익 로고)입니다.
+V6의 18개 압력센서(손가락마다 3개, 손바닥 3개)를 V6 손바닥 렌더 위에 표시합니다. 원익 `allegro_hand_sensor_visualizer`(손가락 4개 손용)를 참고해 검은 배경, 손 이미지, 원익 로고로 구성했습니다.
 
 - 값은 **접촉 압력(kPa)** 입니다. 센서는 대기압(약 1013~1024 hPa, 센서마다 조금 다름)을 읽으므로, 시작할 때 손에 아무것도 닿지 않은 상태의 값을 기준으로 뺍니다. 다시 잡으려면 **T**.
 - 색은 0~40 kPa 구간입니다(세게 누르면 약 50 kPa).
 - 500 hPa 아래로 읽히는 채널은 **신호 없음(회색 `--`)** 으로 표시합니다. 센서나 배선에 문제가 있는 채널입니다.
-- **N** 을 누르면 채널 번호가 표시됩니다. 손끝이 각 손가락의 첫 채널(0, 3, 6, 9, 12)이라는 것은 드라이버 기준으로 확인됐고, **가운데·기저 마디의 순서와 손바닥 3개의 위치는 아직 확인 전**입니다. 마디를 하나씩 눌러 보고 맞지 않으면 `assets/v6_tactile_layout.json` 의 해당 항목 좌표를 바꾸면 됩니다.
+- 센서 배치는 오른손 실물에서 패드를 하나씩 눌러 실측했습니다(2026-10-08). 손가락마다 **손끝 → 가운데 마디 → 뿌리 쪽 마디** 순서(엄지 0~2, 검지 3~5, 중지 6~8, 약지 9~11, 소지 12~14)이고, 손바닥은 15 = 위쪽 검지 쪽 패드, 16 = 위쪽 소지 쪽 패드, 17 = 아래쪽 패드입니다. 왼손은 같은 배치를 좌우 반전해 씁니다(왼손은 따로 눌러 보지 않음). 이 오른손은 14번(소지 뿌리 쪽 마디)이 0을 읽습니다. **N** 을 누르면 채널 번호가 표시되고, 좌표는 `assets/v6_tactile_layout.json` 에 있습니다.
 - 토픽은 자동으로 찾습니다(이름이 `tactile_pressures` 로 끝나는 토픽). 지정하려면 `--tactile-topic`.
 
 ### 떨림 대응 (v3)
@@ -396,7 +402,7 @@ nmcli con up allegro-hand
 이 PC에는 `allegro-hand` 프로필이 이미 만들어져 있습니다. 케이블을 다시 꽂은 뒤 주소가 없으면 `nmcli con up allegro-hand`만 실행하세요.
 
 **`Package 'allegro_hand_v6_bringup' not found`**
-- 드라이버 워크스페이스가 빌드되지 않았습니다. `cd ~/v6f_manuse_teleoperation && colcon build --symlink-install`
+- 드라이버 워크스페이스가 빌드되지 않았습니다. `cd ~/v6f_manuse_teleoperation && colcon build --symlink-install --base-paths src`
 
 **`ModuleNotFoundError: No module named 'mediapipe'`**
 - `.venv`가 없거나 런처가 시스템 python으로 폴백한 경우입니다. `./tools/setup.sh`를 한 번 실행하세요. 런처는 `.venv`가 없으면 경고를 찍고 진행합니다.

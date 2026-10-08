@@ -1,225 +1,225 @@
 {
  "image_size": "per-side (cropped to the hand)",
- "note": "ch=MANUS haptics.yml 순서. 손끝=각 손가락 첫 채널(확인됨), mid/base 순서와 손바닥 위치는 가정",
+ "note": "Measured 2026-10-08 on a right hand by pressing each pad in turn: every finger is tip, middle phalanx, proximal phalanx (0-2 thumb ... 12-14 pinky); palm 15 = upper pad on the index side, 16 = upper pad on the pinky side, 17 = lower pad. On that hand channel 14 reads 0 (no signal). The left hand uses the mirrored positions and was not pressed.",
  "layout": {
   "right": [
    {
     "channel": 0,
     "name": "thumb_tip",
-    "u": 0.9411,
-    "v": 0.5394
+    "u": 0.9013,
+    "v": 0.5575
    },
    {
     "channel": 1,
-    "name": "thumb_mid",
-    "u": 0.6906,
-    "v": 0.6956
+    "name": "thumb_middle",
+    "u": 0.7914,
+    "v": 0.6224
    },
    {
     "channel": 2,
-    "name": "thumb_base",
-    "u": 0.6135,
-    "v": 0.7305
+    "name": "thumb_proximal",
+    "u": 0.6759,
+    "v": 0.6917
    },
    {
     "channel": 3,
     "name": "index_tip",
-    "u": 0.4788,
-    "v": 0.1029
+    "u": 0.4771,
+    "v": 0.1475
    },
    {
     "channel": 4,
-    "name": "index_mid",
-    "u": 0.4745,
-    "v": 0.3044
+    "name": "index_middle",
+    "u": 0.4771,
+    "v": 0.2817
    },
    {
     "channel": 5,
-    "name": "index_base",
-    "u": 0.4745,
-    "v": 0.4382
+    "name": "index_proximal",
+    "u": 0.4771,
+    "v": 0.4174
    },
    {
     "channel": 6,
     "name": "middle_tip",
-    "u": 0.3723,
-    "v": 0.0587
+    "u": 0.3686,
+    "v": 0.1106
    },
    {
     "channel": 7,
-    "name": "middle_mid",
-    "u": 0.3679,
-    "v": 0.2597
+    "name": "middle_middle",
+    "u": 0.3686,
+    "v": 0.2389
    },
    {
     "channel": 8,
-    "name": "middle_base",
-    "u": 0.3679,
-    "v": 0.3932
+    "name": "middle_proximal",
+    "u": 0.3686,
+    "v": 0.3717
    },
    {
     "channel": 9,
     "name": "ring_tip",
-    "u": 0.2657,
-    "v": 0.1029
+    "u": 0.2629,
+    "v": 0.1475
    },
    {
     "channel": 10,
-    "name": "ring_mid",
-    "u": 0.2613,
-    "v": 0.3044
+    "name": "ring_middle",
+    "u": 0.2629,
+    "v": 0.2817
    },
    {
     "channel": 11,
-    "name": "ring_base",
-    "u": 0.2613,
-    "v": 0.4382
+    "name": "ring_proximal",
+    "u": 0.2629,
+    "v": 0.4174
    },
    {
     "channel": 12,
     "name": "pinky_tip",
-    "u": 0.0751,
-    "v": 0.1665
+    "u": 0.0848,
+    "v": 0.1947
    },
    {
     "channel": 13,
-    "name": "pinky_mid",
-    "u": 0.1041,
-    "v": 0.3671
+    "name": "pinky_middle",
+    "u": 0.1099,
+    "v": 0.3481
    },
    {
     "channel": 14,
-    "name": "pinky_base",
-    "u": 0.1262,
-    "v": 0.4994
+    "name": "pinky_proximal",
+    "u": 0.1335,
+    "v": 0.4823
    },
    {
     "channel": 15,
-    "name": "palm_0",
-    "u": 0.2345,
-    "v": 0.6881
+    "name": "palm_upper_index_side",
+    "u": 0.4061,
+    "v": 0.6903
    },
    {
     "channel": 16,
-    "name": "palm_1",
-    "u": 0.3255,
-    "v": 0.6881
+    "name": "palm_upper_pinky_side",
+    "u": 0.2531,
+    "v": 0.7345
    },
    {
     "channel": 17,
-    "name": "palm_2",
-    "u": 0.4164,
-    "v": 0.6881
+    "name": "palm_lower",
+    "u": 0.2782,
+    "v": 0.8717
    }
   ],
   "left": [
    {
     "channel": 0,
     "name": "thumb_tip",
-    "u": 0.0603,
-    "v": 0.5394
+    "u": 0.0974,
+    "v": 0.5575
    },
    {
     "channel": 1,
-    "name": "thumb_mid",
-    "u": 0.3106,
-    "v": 0.6956
+    "name": "thumb_middle",
+    "u": 0.2072,
+    "v": 0.6224
    },
    {
     "channel": 2,
-    "name": "thumb_base",
-    "u": 0.3879,
-    "v": 0.7305
+    "name": "thumb_proximal",
+    "u": 0.3227,
+    "v": 0.6917
    },
    {
     "channel": 3,
     "name": "index_tip",
-    "u": 0.5226,
-    "v": 0.1028
+    "u": 0.5216,
+    "v": 0.1475
    },
    {
     "channel": 4,
-    "name": "index_mid",
-    "u": 0.5271,
-    "v": 0.3044
+    "name": "index_middle",
+    "u": 0.5216,
+    "v": 0.2817
    },
    {
     "channel": 5,
-    "name": "index_base",
-    "u": 0.5271,
-    "v": 0.4382
+    "name": "index_proximal",
+    "u": 0.5216,
+    "v": 0.4174
    },
    {
     "channel": 6,
     "name": "middle_tip",
-    "u": 0.629,
-    "v": 0.0586
+    "u": 0.63,
+    "v": 0.1106
    },
    {
     "channel": 7,
-    "name": "middle_mid",
-    "u": 0.6335,
-    "v": 0.2597
+    "name": "middle_middle",
+    "u": 0.63,
+    "v": 0.2389
    },
    {
     "channel": 8,
-    "name": "middle_base",
-    "u": 0.6335,
-    "v": 0.3932
+    "name": "middle_proximal",
+    "u": 0.63,
+    "v": 0.3717
    },
    {
     "channel": 9,
     "name": "ring_tip",
-    "u": 0.7356,
-    "v": 0.1028
+    "u": 0.7357,
+    "v": 0.1475
    },
    {
     "channel": 10,
-    "name": "ring_mid",
-    "u": 0.7402,
-    "v": 0.3044
+    "name": "ring_middle",
+    "u": 0.7357,
+    "v": 0.2817
    },
    {
     "channel": 11,
-    "name": "ring_base",
-    "u": 0.7402,
-    "v": 0.4382
+    "name": "ring_proximal",
+    "u": 0.7357,
+    "v": 0.4174
    },
    {
     "channel": 12,
     "name": "pinky_tip",
-    "u": 0.9262,
-    "v": 0.1664
+    "u": 0.9138,
+    "v": 0.1947
    },
    {
     "channel": 13,
-    "name": "pinky_mid",
-    "u": 0.8973,
-    "v": 0.3671
+    "name": "pinky_middle",
+    "u": 0.8887,
+    "v": 0.3481
    },
    {
     "channel": 14,
-    "name": "pinky_base",
-    "u": 0.8752,
-    "v": 0.4996
+    "name": "pinky_proximal",
+    "u": 0.8651,
+    "v": 0.4823
    },
    {
     "channel": 15,
-    "name": "palm_0",
-    "u": 0.7669,
-    "v": 0.6881
+    "name": "palm_upper_index_side",
+    "u": 0.5925,
+    "v": 0.6903
    },
    {
     "channel": 16,
-    "name": "palm_1",
-    "u": 0.6759,
-    "v": 0.6881
+    "name": "palm_upper_pinky_side",
+    "u": 0.7455,
+    "v": 0.7345
    },
    {
     "channel": 17,
-    "name": "palm_2",
-    "u": 0.585,
-    "v": 0.6881
+    "name": "palm_lower",
+    "u": 0.7204,
+    "v": 0.8717
    }
   ]
  }

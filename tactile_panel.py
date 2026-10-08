@@ -3,17 +3,16 @@ tactile_panel.py — Allegro Hand V6 tactile pressure display (Wonik sensor-visu
 
 The V6 driver publishes 18 absolute pressures in hPa on `<hardware node>/tactile_pressures`:
 
-    0  1  2   thumb   (0 = fingertip)
-    3  4  5   index   (3 = fingertip)
-    6  7  8   middle  (6 = fingertip)
-    9 10 11   ring    (9 = fingertip)
-   12 13 14   pinky   (12 = fingertip)
-   15 16 17   palm
+    0  1  2   thumb   tip, middle phalanx, proximal phalanx
+    3  4  5   index   (same order)
+    6  7  8   middle
+    9 10 11   ring
+   12 13 14   pinky
+   15 16 17   palm    upper pad on the index side, upper pad on the pinky side, lower pad
 
-The fingertip being the **first** channel of each finger was confirmed against the driver
-(MANUS teleop project, configs/haptics.yml, 2026-09-15). Which of the other two is the
-middle and which the base phalanx, and where the three palm sensors sit, is **not yet
-confirmed** -- press each one and watch which circle lights to check `assets/v6_tactile_layout.json`.
+This layout was measured on the right hand on 2026-10-08 by pressing each pad in turn; the
+circle positions are in `assets/v6_tactile_layout.json` (the left hand uses mirrored positions).
+On that right hand channel 14 (pinky, proximal) reads 0.
 
 At rest each sensor reads the atmosphere (about 1013-1024 hPa, a little different per sensor),
 so the panel shows **contact pressure**: the reading minus a per-channel baseline taken while
@@ -169,9 +168,10 @@ class TactilePanel(QWidget):
 
         # The assets are already cropped to the hand (tools/render_tactile_bg.py + crop).
         src = QRectF(0, 0, img.width(), img.height())
-        scale = min(self.width() / src.width(), self.height() / src.height())
+        avail_w = self.width() - 40           # keep the colour scale on the right clear of the hand
+        scale = min(avail_w / src.width(), self.height() / src.height())
         dw, dh = src.width() * scale, src.height() * scale
-        dst = QRectF((self.width() - dw) / 2, (self.height() - dh) / 2, dw, dh)
+        dst = QRectF((avail_w - dw) / 2, (self.height() - dh) / 2, dw, dh)
         p.setOpacity(0.55)                    # dim the hand so the readings stand out
         p.drawPixmap(dst, img, src)
         p.setOpacity(1.0)
