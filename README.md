@@ -2,6 +2,8 @@
 
 단일 RGB 카메라(웹캠 또는 Intel RealSense)와 MediaPipe Hands로 작업자의 손동작을 추적해 Wonik Robotics **Allegro Hand V6 (5지, 20-DOF)** 를 원격 조종합니다. 왼손/오른손 로봇을 모두 지원하고(기본은 오른손), VLA 학습용 데이터셋 녹화 기능이 들어 있습니다.
 
+> **처음 이어받는 분은 [`docs/HANDOVER.md`](docs/HANDOVER.md) 부터 보세요.** 이 PC의 환경, 실측으로 확인한 하드웨어 사실, 지금 되는 것과 안 되는 것, 양손 모드로 가는 순서가 거기 있습니다.
+
 **ROS 2 Jazzy 네이티브(Ubuntu 24.04, 컨테이너 없음)** 가 기준입니다. 이전의 ROS 2 Humble + 도커 버전은 [`humble/`](humble/) 폴더에 동결해 두었습니다([Humble 버전과의 차이](#humble-버전과의-차이)).
 
 | 기능 | 내용 |
