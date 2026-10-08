@@ -64,6 +64,8 @@ colcon build --symlink-install --base-paths src
 
 워크스페이스 위치가 다르면 `config/teleop.env` 의 `ALLEGRO_WS` 를 바꿉니다.
 
+저장소의 `urdf/` 는 콕핏 3D 뷰가 쓰는 사본이라 드라이버 패키지의 URDF와 같아야 합니다. 드라이버를 새 버전으로 바꾸면 `cp <드라이버>/allegro_hand_v6_description/urdf/allegro_hand_v6_{right,left}.urdf urdf/` 로 같이 맞추세요.
+
 ### 3. DexPilot 리타게팅 코어 (사내 MANUS 텔레옵 프로젝트)
 
 v2/v3 리타게팅은 사내 MANUS 텔레옵 프로젝트(`V6_Teleoperation`)의 리타게팅 코어, 튜닝된 설정, 손끝 패드 오프셋을 **복사하지 않고 그 경로에서 그대로 읽습니다.** 이 프로젝트는 별도로 받아야 합니다. DexPilot이 numpy 2.x를 쓰기 때문에 이 저장소의 `.venv`(numpy 1.x, mediapipe용)와 분리된 가상환경에서 돌립니다.
@@ -94,7 +96,7 @@ cd allegro_vision_teleop
 
 1. **apt**: `ros-jazzy-ros2-control`, `ros-jazzy-ros2-controllers`, `ros-jazzy-rviz2`, `ros-jazzy-xacro`, `ros-jazzy-robot-state-publisher`, `ros-jazzy-cv-bridge`, `ros-jazzy-rmw-cyclonedds-cpp`, `python3-pyqt5`, `v4l-utils` 등
 2. **`.venv`** (`--system-site-packages`): `mediapipe`, `opencv-contrib-python`, `PyOpenGL`, `scipy` 를 pip로 설치. `rclpy` · `cv_bridge` · `PyQt5` 는 apt 것을 그대로 씁니다.
-3. **`meshes` 심볼릭 링크**: 드라이버 패키지의 STL 메쉬 → 콕핏 3D 뷰가 워크스페이스를 source 하지 않아도 동작
+3. **`meshes` 심볼릭 링크**: 드라이버 패키지의 STL 메쉬 → 콕핏 3D 뷰가 워크스페이스를 source 하지 않아도 동작 (왼손은 `meshes/left/` 를 따로 쓰므로 드라이버 소스에 이 폴더가 있어야 합니다)
 4. **검증**: 드라이버 패키지 탐색 여부와 모든 파이썬 의존성 import 확인
 
 sudo 없이 돌리려면 `./tools/setup.sh --no-apt` (apt 패키지가 이미 깔려 있을 때). 저장소 위치는 자유입니다.
