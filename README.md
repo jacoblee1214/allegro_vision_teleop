@@ -1,10 +1,51 @@
 # Allegro Hand Vision Teleoperation
 
-단일 RGB 카메라(웹캠 또는 Intel RealSense)와 MediaPipe Hands로 작업자의 손동작을 추적해 Wonik Robotics **Allegro Hand V6 (5지, 20-DOF)** 를 원격 조종하는 ROS 2 Humble 패키지입니다. 왼손/오른손 로봇을 모두 지원하며, VLA 학습용 데이터셋 녹화 기능을 포함합니다. Allegro Hand V4 (4지, 16-DOF)용 런처도 함께 들어 있습니다.
+단일 RGB 카메라(웹캠 또는 Intel RealSense)와 MediaPipe Hands로 작업자의 손동작을 추적해 Wonik Robotics **Allegro Hand V6 (5지, 20-DOF)** 를 원격 조종합니다. 왼손/오른손 로봇을 모두 지원하며, VLA 학습용 데이터셋 녹화 기능을 포함합니다. Allegro Hand V4 (4지, 16-DOF)용 런처도 함께 들어 있습니다.
 
 ---
 
-## 목차
+## 환경별 실행
+
+이 저장소는 두 환경을 지원합니다. **최신 기능은 Jazzy 쪽(`jazzy/`)에 있습니다.**
+
+| | **ROS 2 Jazzy (네이티브)** — 최신 | ROS 2 Humble (도커) |
+|---|---|---|
+| OS | Ubuntu 24.04 | Ubuntu 22.04 이상 + `ros_humble_dev` 컨테이너 |
+| 폴더 | [`jazzy/`](jazzy/) | 저장소 루트 |
+| 최신 버전 | **v3** | v6_3 (콕핏) · v6_1 (대시보드) |
+| 리타게팅 | DexPilot: 손끝 위치를 맞추므로 **핀치가 실제로 닫힘** | 관절 각도 매핑: 화면에서는 핀치 자세가 나오지만 실물 손끝은 벌어짐 |
+| 압력센서 화면 | **있음** (18채널, kPa) | 없음 |
+| 떨림 대응 | 좌표 중앙값 + EMA, 추적 끊김 시 초기화 | 브릿지 EMA만 |
+| 로봇 주소 | 후보 주소를 확인해 알레그로 핸드인지 검증, `--hand` 로 손 선택 | 기본 주소 위주 |
+
+### ROS 2 Jazzy (권장)
+
+```bash
+cd allegro_vision_teleop/jazzy
+./tools/setup.sh                      # 최초 1회: apt 패키지 + .venv + 검증
+./run_dashboard_v3.sh                 # 평소에는 이것 하나 (대시보드 + RViz2 + 압력센서 화면)
+./run_dashboard_v3.sh --hand right    # 두 손이 다 연결돼 있을 때 오른손 선택
+./run_dashboard_v3.sh --smooth 9      # 로봇이 떨면 평활화를 키운다
+./run_dashboard_v3.sh sim --hand left # 로봇 없이 확인
+./check_hand.sh                       # 통신·손 종류·엔코더 확인
+```
+
+사전 준비 두 가지가 필요합니다. 자세한 내용은 [`jazzy/README.md`](jazzy/README.md) 를 보세요.
+- 원익 V6 드라이버 패키지(`allegro_hand_v6_bringup`, `_description`, `_hardware`)를 Jazzy에서 colcon 빌드한 작업공간. 위치는 `jazzy/config/teleop.env` 의 `ALLEGRO_WS`.
+- DexPilot 리타게팅 코어가 있는 MANUS 텔레옵 프로젝트(사내)와 그 가상환경. 위치는 `jazzy/config/teleop_v2.env` 의 `V6F_TELEOP_ROOT`, `RETARGET_PY`.
+
+### ROS 2 Humble (도커)
+
+아래 [빠른 실행](#빠른-실행)부터의 내용이 이 환경입니다.
+
+```bash
+~/humble_ws/allegro_vision_teleop/run_cockpit_v6_3.sh real      # 콕핏 UI
+~/humble_ws/allegro_vision_teleop/run_dashboard_v6_1.sh real    # 대시보드 + RViz2
+```
+
+---
+
+## 목차 (ROS 2 Humble)
 1. [주요 기능](#주요-기능)
 2. [빠른 실행](#빠른-실행)
 3. [설치](#설치)
