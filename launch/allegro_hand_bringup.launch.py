@@ -27,11 +27,14 @@ Example:
   ros2 launch launch/allegro_hand_bringup.launch.py \
       hardware:=hardware descriptor:=modbus_tcp:192.168.1.100:502 hand:=right rviz:=false
 """
+from pathlib import Path
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description() -> LaunchDescription:
@@ -45,19 +48,26 @@ def generate_launch_description() -> LaunchDescription:
     bringup_share = FindPackageShare("allegro_hand_v6_bringup")
     description_share = FindPackageShare("allegro_hand_v6_description")
 
+    # The driver's bring-up xacro, except that the hand comes from this repo's urdf/.
+    # Only the left hand differs, and only in the abduction signs the hardware reports;
+    # urdf/allegro_hand.urdf.xacro says why, and includes the driver's ros2_control block
+    # unchanged.
+    repo_urdf_dir = str(Path(__file__).resolve().parent.parent / "urdf")
+
     robot_description = {
-        "robot_description": Command(
+        # Wrapped as a string: the expansion carries XML comments, which the parameter
+        # layer otherwise tries to read as YAML and rejects.
+        "robot_description": ParameterValue(Command(
             [
                 "xacro ",
-                PathJoinSubstitution(
-                    [bringup_share, "config", "single_hand", "allegro_hand.urdf.xacro"]
-                ),
+                str(Path(repo_urdf_dir) / "allegro_hand.urdf.xacro"),
+                " urdf_dir:=", repo_urdf_dir,
                 " hand:=", hand,
                 " ros2_control_hardware_type:=", hardware,
                 " io_interface_descriptor:=", descriptor,
                 " hand_id:=", hand_id,
             ]
-        )
+        ), value_type=str)
     }
 
     controllers_yaml = PathJoinSubstitution(

@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!--
+  The driver's own single_hand/allegro_hand.urdf.xacro, with one change: the hand itself
+  comes from this repository's urdf/ instead of the driver package's.
+
+  Only the left hand actually differs, and only in joint10/20/30/40: this repository keeps
+  the abduction signs the hardware reports (see the note at the top of
+  urdf/allegro_hand_v6_left.urdf). Reading the driver package's description instead would
+  make RViz draw the left hand's abduction backwards against the joint values on the wire,
+  and would clip a command meant for the far side of the joint's travel at a fifth of it.
+
+  The ros2_control block is the driver's, included unchanged, so the hardware plugin, its
+  parameters and the joint interfaces stay whatever the installed driver says they are.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="allegro_hand_v6">
+    <xacro:arg name="ros2_control_hardware_type" default="hardware" />
+    <xacro:arg name="hand" default="right" />
+    <xacro:arg name="ah_prefix" default="" />
+    <xacro:arg name="io_interface_descriptor" default="modbus_tcp:192.168.40.100:502" />
+    <xacro:arg name="hand_id" default="1" />
+    <!-- This repository's urdf/ directory, passed in by the launch file. -->
+    <xacro:arg name="urdf_dir" default="" />
+
+    <xacro:property name="hand_arg" value="$(arg hand)"/>
+    <xacro:property name="urdf_dir" value="$(arg urdf_dir)"/>
+
+    <xacro:include filename="${urdf_dir}/allegro_hand_v6_${hand_arg}.urdf" />
+
+    <xacro:include filename="$(find allegro_hand_v6_bringup)/config/single_hand/allegro_hand.ros2_control.xacro" />
+    <xacro:allegro_hand_v6_ros2_control name="allegro_hand" prefix="$(arg ah_prefix)" ros2_control_hardware_type="$(arg ros2_control_hardware_type)" io_interface_descriptor="$(arg io_interface_descriptor)" hand_id="$(arg hand_id)"/>
+</robot>
