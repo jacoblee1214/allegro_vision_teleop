@@ -1,6 +1,13 @@
-"""V6 손바닥 정면 렌더 + 18개 압력센서 화면 좌표 계산 (원익 센서 시각화 스타일 배경)."""
+"""V6 손바닥 정면 렌더 + 18개 압력센서 화면 좌표 계산 (원익 센서 시각화 스타일 배경).
+
+assets/v6_tactile_bg_{right,left}.png 와 assets/v6_tactile_layout.json 을 다시 만들 때 쓴다.
+Humble 쪽 콕핏 렌더러(teleop_cockpit_v6_3.py)를 GPU 로 돌려 그린 뒤, 결과를 손 영역으로 잘라 쓴다.
+경로는 환경변수로 바꾼다: COCKPIT_DIR (teleop_cockpit_v6_3.py 위치), V6F_TELEOP_ROOT (MANUS 프로젝트),
+OUT_DIR (출력 위치).
+"""
+import os
 import sys, json, numpy as np, yaml
-sys.path.insert(0, "/home/humble_ws/allegro_vision_teleop")
+sys.path.insert(0, os.environ.get("COCKPIT_DIR", "/home/humble_ws/allegro_vision_teleop"))
 from PyQt5.QtWidgets import QApplication
 app = QApplication(sys.argv)
 import teleop_cockpit_v6_3 as ck
@@ -13,7 +20,8 @@ class _NoPainter(metaclass=_Meta):    # HUD 글자를 빼기 위해 QPainter 를
 ck.QPainter = _NoPainter
 
 W, H = 900, 1000
-CFG_DIR = "/home/humble_ws/allegro_grasp_retarget/external/v6f_teleop/configs"
+CFG_DIR = os.path.join(os.environ.get("V6F_TELEOP_ROOT", os.path.expanduser("~/V6_Teleoperation")), "src/v6f_teleop/configs")
+OUT_DIR = os.environ.get("OUT_DIR", ".")
 FINGERS = [("thumb", 1), ("index", 2), ("middle", 3), ("ring", 4), ("pinky", 5)]
 
 def project(pts, az, el, d, pan, w, h, fov=30.0):
@@ -48,7 +56,7 @@ for side, az, pan_x in (("right", 0.0, 0.035), ("left", 180.0, 0.035)):
     w._proj = P.T.copy()
     gl.glClearColor(0.0, 0.0, 0.0, 1.0)
     for _ in range(3): app.processEvents(); w.grabFramebuffer()
-    img = w.grabFramebuffer(); img.save(f"/home/humble_ws/tactile_assets_tmp/v6_tactile_bg_{side}.png")
+    img = w.grabFramebuffer(); img.save(os.path.join(OUT_DIR, f"v6_tactile_bg_{side}.png"))
 
     model = w._urdf_model; tf = model.compute_link_transforms({})
     def centroid(link):
@@ -71,5 +79,5 @@ for side, az, pan_x in (("right", 0.0, 0.035), ("left", 180.0, 0.035)):
     w.close()
 
 json.dump({"image_size": [W, H], "note": "ch=MANUS haptics.yml 순서. 손끝=각 손가락 첫 채널(확인됨), mid/base 순서와 손바닥 위치는 가정", "layout": layout},
-          open("/home/humble_ws/tactile_assets_tmp/v6_tactile_layout.json", "w"), ensure_ascii=False, indent=1)
+          open(os.path.join(OUT_DIR, "v6_tactile_layout.json"), "w"), ensure_ascii=False, indent=1)
 print("렌더 및 좌표 계산 완료")
