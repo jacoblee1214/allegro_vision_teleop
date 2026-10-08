@@ -261,7 +261,7 @@ flowchart LR
 - **조종 손**: 로봇 왼손은 작업자 왼손으로, 오른손은 오른손으로 조종합니다. 반대 손을 쓰면 굽힘이 인식되지 않습니다.
 - **리타게팅**: 왼손/오른손 파이프라인은 거울 대칭입니다. 굽힘은 같은 값, 벌림은 부호 반대. 엄지는 손별로 따로 튜닝되어 있습니다.
 - **URDF 좌표계**: 모든 관절이 0 rad에서 손가락이 곧게 펴지고, 양수가 손바닥 쪽 굽힘입니다.
-- **왼손 MCP 모터 오프셋**: 왼손 실물의 MCP 모터(`joint11/21/31/41`)는 펴진 상태에서 −π/2를 읽습니다. 이 변환은 `sim_bridge_node.py` 한 곳에서만 합니다.
+- **왼손 MCP 모터 영점**: 왼손의 MCP 모터(`joint11/21/31/41`)는 손가락을 편 상태에서 **0을 읽습니다**(URDF 그대로). 보정이 필요 없어 기본값은 보정 없음입니다. 영점이 90° 틀어진 손을 만나면 `--left-mcp-offset -1.5708` 로 켜고, 변환은 `sim_bridge_node.py` 한 곳에서만 합니다. 확인 방법: 텔레옵을 끄고 손가락을 편 상태에서 `./tools/check_hand.py 100` 의 값을 읽으면 그 값이 곧 오프셋입니다. (2026-10-08 실측: 힘을 푼 왼손이 joint11 = +1.42 rad 로 굽힘이 양수. 9월에는 −π/2 였는데 그 뒤 영점을 다시 잡은 것으로 보입니다.)
 
 | 경로 | 변환 (real + 왼손, joint11/21/31/41) |
 |---|---|
@@ -377,12 +377,12 @@ RViz2의 기본 Orbit 카메라입니다. 조작 전에 RViz2 창을 한 번 클
 `launch/allegro_hand_bringup.launch.py`는 `allegro_hand_v6_bringup`의 원본 launch와 비교해 이렇게 다릅니다.
 
 - `rviz` 인자가 실제로 RViz2를 켜고 끕니다 (콕핏은 자체 3D 뷰가 있어서 필요 없음).
-- `joint_states_topic`으로 `robot_state_publisher`가 `/allegro/joint_states_urdf`를 읽게 합니다. 왼손 MCP 오프셋 때문에 필요합니다.
+- `joint_states_topic`으로 `robot_state_publisher`가 `/allegro/joint_states_urdf`를 읽게 합니다. 왼손 MCP 영점 보정을 켠 경우 이 토픽이 그 보정을 되돌려 줍니다.
 - 촉각 릴레이 / 대시보드 / 포즈 GUI 노드는 띄우지 않습니다 (MANUS 데모용).
 - 컨트롤러 spawner 타임아웃을 60초로 늘렸습니다. Modbus 하드웨어 초기화가 ~9초 걸려서 기본 10초로는 콜드 스타트 때 `joint_state_broadcaster`가 실패합니다.
 - `world → base_link` 정적 변환이 항등입니다. Wonik 브링업은 `pitch = -π/2`를 써서 손가락이 눕고 엄지만 위를 향하는데, `base_link`에서 +Z가 손가락 방향이라 항등 회전이어야 RViz에서 손이 선 자세로 보입니다.
 
-> 기본은 **오른손**입니다(`config/teleop.env` 의 `HAND_SIDE`). 두 손이 다 연결돼 있으면 오른손을 고르고, 오른손이 없으면 연결된 손을 씁니다. 왼손 코드 경로(MCP −π/2 오프셋)도 그대로 동작합니다.
+> 기본은 **오른손**입니다(`config/teleop.env` 의 `HAND_SIDE`). 두 손이 다 연결돼 있으면 오른손을 고르고, 오른손이 없으면 연결된 손을 씁니다. 왼손 코드 경로도 그대로 동작합니다.
 
 ---
 

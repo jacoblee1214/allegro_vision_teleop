@@ -49,10 +49,22 @@ DEFAULT_RATE = 100.0  # Hz (matches controller_manager 100Hz update_rate)
 
 
 
-# Left hand physical hardware MCP motor offset (-90 deg) intentionally configured by developer
+# Where a left hand's MCP motors read zero.
+#
+# These four motors can be zeroed with the fingers straight, which is what the URDF
+# describes, or 90 degrees away from that. On a hand zeroed the second way the command
+# path has to subtract 90 degrees and the state path add it back, or the fingers sit at
+# their stop and the model is drawn bent.
+#
+# **The lab's left hand (192.168.1.100) is zeroed straight: pass nothing.** Measured
+# 2026-10-08 with the torque off -- relaxed and hanging it reads joint11 = +1.42 rad and
+# the URDF allows -0.07 to +1.57, so zero is the straight finger. It was zeroed the other
+# way in September, so a hand that has been re-zeroed since can need the offset again:
+# `--left-mcp-offset -1.5708`. To check, stop the teleop and read the joints (tools/check_hand.py):
+# the value with the fingers straight is the offset, negated.
 LEFT_MCP_JOINT_INDICES: tuple[int, ...] = (5, 9, 13, 17)  # joint11, joint21, joint31, joint41
 LEFT_MCP_JOINT_NAMES: tuple[str, ...] = ("joint11", "joint21", "joint31", "joint41")
-MOTOR_OFFSET_90DEG: float = 1.5707963267948966  # 90 degrees in radians
+DEFAULT_LEFT_MCP_OFFSET: float = 0.0
 
 
 BRIDGE_QOS = QoSProfile(
@@ -71,6 +83,7 @@ class SimBridgeNode(Node):
         rate: float = DEFAULT_RATE,
         mode: str = "real",
         hand_side: str = "right",
+        left_mcp_offset: float = DEFAULT_LEFT_MCP_OFFSET,
     ) -> None:
         super().__init__("sim_bridge_node")
         self.input_topic = input_topic
@@ -79,6 +92,7 @@ class SimBridgeNode(Node):
         self.rate = max(10.0, float(rate))
         self.mode = mode.lower()
         self.hand_side = hand_side.lower()
+        self.left_mcp_offset = float(left_mcp_offset)
 
         self._seq = 0
         self._last_log_time = time.monotonic()
@@ -131,6 +145,13 @@ class SimBridgeNode(Node):
             f"Expected joints count: {N_JOINTS} ({CONTROLLER_JOINT_ORDER[0]} ~ {CONTROLLER_JOINT_ORDER[-1]})"
         )
 
+        if self.mode == "real" and self.hand_side == "left":
+            self.get_logger().info(
+                f"왼손 MCP 모터 영점: {self.left_mcp_offset:+.4f} rad"
+                + (" (URDF 그대로, 보정 없음)" if not self.left_mcp_offset
+                   else " — joint11/21/31/41 명령에 더하고 상태에서 뺀다")
+            )
+
     def _teleop_state_callback(self, msg: String) -> None:
         """Handles dynamic hand model switching [H] from Dashboard / Cockpit UI."""
         try:
@@ -151,11 +172,11 @@ class SimBridgeNode(Node):
 
     def _joint_states_callback(self, msg: JointState) -> None:
         """Republish /joint_states in URDF coordinates (inverse of the command-path motor offset)."""
-        if self.mode == "real" and self.hand_side == "left":
+        if self.mode == "real" and self.hand_side == "left" and self.left_mcp_offset:
             positions = list(msg.position)
             for i, name in enumerate(msg.name):
                 if i < len(positions) and name.removeprefix("ah_") in LEFT_MCP_JOINT_NAMES:
-                    positions[i] += MOTOR_OFFSET_90DEG
+                    positions[i] -= self.left_mcp_offset
             msg.position = positions
         self._pub_js_urdf.publish(msg)
 
@@ -204,13 +225,11 @@ class SimBridgeNode(Node):
         # 3. Target Command Vector
         cmd_data = self._filtered_angles.copy()
 
-        # Physical Hardware Offset:
-        # In 'real' mode on Left Hand, physical MCP motors require -90 deg (-1.5708 rad)
-        # to physically be straight flat open (as configured by hardware developer).
-        # In 'sim' mode, standard 0.0 rad is sent directly so simulation URDF does NOT bend backwards!
-        if self.mode == "real" and self.hand_side == "left":
+        # Where this left hand's MCP motors read zero, if that is not the straight finger
+        # the URDF describes. Zero, and the default, means send the URDF value unchanged.
+        if self.mode == "real" and self.hand_side == "left" and self.left_mcp_offset:
             for idx in LEFT_MCP_JOINT_INDICES:
-                cmd_data[idx] -= MOTOR_OFFSET_90DEG
+                cmd_data[idx] += self.left_mcp_offset
 
         # Publish command to hardware position controller at constant high frequency
         cmd_msg = Float64MultiArray()
@@ -243,6 +262,9 @@ def main() -> None:
     parser.add_argument("--rate", "--hz", dest="rate", type=float, default=DEFAULT_RATE, help="Command publishing frequency in Hz (default: 100.0, e.g. 60 or 100 for tremor suppression)")
     parser.add_argument("--mode", type=str, default="real", choices=["real", "sim", "nodes"], help="Operation mode (default: real)")
     parser.add_argument("--hand", type=str, default="right", choices=["left", "right"], help="Hand model side (default: right)")
+    parser.add_argument("--left-mcp-offset", type=float, default=DEFAULT_LEFT_MCP_OFFSET,
+                        help="Radians a left hand's MCP motors read with the fingers straight, if not 0 "
+                             "(e.g. -1.5708 on a hand zeroed 90 degrees away). Real mode, left hand only.")
     args = parser.parse_args()
 
     rclpy.init()
@@ -253,6 +275,7 @@ def main() -> None:
         rate=args.rate,
         mode=args.mode,
         hand_side=args.hand,
+        left_mcp_offset=args.left_mcp_offset,
     )
     try:
         rclpy.spin(node)

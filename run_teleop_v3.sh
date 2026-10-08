@@ -83,6 +83,7 @@ while [[ $# -gt 0 ]]; do
         --no-undo-mirror)       UNDO_MIRROR=false; shift ;;
         --retarget-alpha)       RETARGET_ALPHA="$2"; shift 2 ;;
         --smooth)               SMOOTH="$2"; shift 2 ;;
+        --left-mcp-offset)      LEFT_MCP_OFFSET="$2"; shift 2 ;;
         --ema|--input-ema)      INPUT_EMA="$2"; shift 2 ;;
         --tactile-topic)        TACTILE_TOPIC="$2"; shift 2 ;;
         --rate|--hz)            RATE="$2"; shift 2 ;;
@@ -523,7 +524,9 @@ PIDS+=($!)
 sleep 1.5
 
 echo "[3/4] Controller bridge node (${RATE} Hz, alpha=$ALPHA, mode: $MODE, hand: $HAND_SIDE)..."
-"$PY" "$REPO_DIR/sim_bridge_node.py" --rate "$RATE" --alpha "$ALPHA" --mode "$MODE" --hand "$HAND_SIDE" &
+BRIDGE_ARGS=(--rate "$RATE" --alpha "$ALPHA" --mode "$MODE" --hand "$HAND_SIDE")
+[ -n "${LEFT_MCP_OFFSET:-}" ] && BRIDGE_ARGS+=(--left-mcp-offset "$LEFT_MCP_OFFSET")
+"$PY" "$REPO_DIR/sim_bridge_node.py" "${BRIDGE_ARGS[@]}" &
 PIDS+=($!)
 sleep 0.5
 
