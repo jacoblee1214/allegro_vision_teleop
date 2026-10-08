@@ -9,15 +9,16 @@
 ## 목차
 1. [환경](#환경)
 2. [설치](#설치)
-3. [빠른 실행](#빠른-실행)
-4. [시스템 구조](#시스템-구조)
-5. [왼손/오른손 처리](#왼손오른손-처리)
-6. [실행 옵션](#실행-옵션)
-7. [단축키](#단축키)
-8. [데이터셋 녹화](#데이터셋-녹화)
-9. [설정 파일](#설정-파일)
-10. [원본과의 차이](#원본과의-차이)
-11. [트러블슈팅](#트러블슈팅)
+3. [빠른 실행](#빠른-실행) (압력센서 화면, 떨림 대응 포함)
+4. [v2 리타게팅 (핀칭)](#v2-리타게팅-핀칭)
+5. [시스템 구조](#시스템-구조)
+6. [왼손/오른손 처리](#왼손오른손-처리)
+7. [실행 옵션](#실행-옵션)
+8. [단축키](#단축키)
+9. [데이터셋 녹화](#데이터셋-녹화)
+10. [설정 파일](#설정-파일)
+11. [원본과의 차이](#원본과의-차이)
+12. [트러블슈팅](#트러블슈팅)
 
 ---
 
@@ -65,19 +66,97 @@ sudo 없이 돌리려면 `./tools/setup.sh --no-apt` (apt 패키지가 이미 �
 
 ## 빠른 실행
 
-저장소 위치는 자유입니다(원본과 달리 고정 경로가 아닙니다). 어느 디렉토리에서 실행해도 됩니다.
+평소에는 **이 명령 하나**면 됩니다. 대시보드 + RViz2 + 압력센서 화면 + DexPilot 리타게팅으로 실물 손을 띄웁니다.
 
 ```bash
-./check_hand.sh                      # 통신·손 종류·엔코더 확인 (ROS·venv 불필요)
-./run_cockpit.sh real                # 콕핏 UI (권장)
-./run_dashboard.sh real              # 대시보드 + RViz2
-./run_teleop.sh real --cockpit --record   # 콕핏 + 데이터셋 녹화
-./run_cockpit.sh sim --hand right    # 로봇 없이 mock 하드웨어로 확인
+./run_dashboard_v3.sh
 ```
 
-- `real` 모드는 Modbus 레지스터 `0x0071`로 손 종류를 자동 감지합니다. 로그의 `[OK] Hand type auto-detected ...` 줄을 확인하세요. **왼손 로봇을 오른손 모드로 구동하면 손가락이 90° 굽혀집니다.** 감지에 실패하면 `--hand left|right`로 지정합니다.
-- `sim` 모드에는 자동 감지가 없으니 `--hand`를 지정하세요.
-- 종료는 런처를 실행한 터미널에서 `Ctrl+C`. 런처가 자기가 띄운 모든 노드를 정리합니다.
+필요할 때만 덧붙입니다.
+
+```bash
+./run_dashboard_v3.sh --hand right    # 왼손·오른손이 둘 다 연결돼 있을 때 오른손을 고른다
+./run_dashboard_v3.sh --smooth 9      # 로봇이 떨면 평활화를 키운다
+./run_dashboard_v3.sh sim --hand left # 로봇 없이 확인
+./check_hand.sh                       # 통신·손 종류·엔코더 확인 (ROS·venv 불필요)
+```
+
+- **로봇 주소는 자동으로 찾습니다.** 기본 주소(`config/teleop.env` 의 `HAND_IP`)와 런처에 적힌 후보 주소를 차례로 확인하고, 응답한 장비가 실제 알레그로 핸드인지(펌웨어·손 종류 레지스터)까지 검증합니다. `--hand` 를 주면 그 손이라고 응답한 장비를 고릅니다. 다른 주소면 `--ip` 로 지정합니다.
+- 알레그로 핸드는 **접속을 하나만 허용**합니다. 다른 세션이 그 손에 붙어 있으면 탐색에서 보이지 않으니 먼저 종료하세요.
+- 로그의 `[OK] Allegro Hand found: ... (right hand, ...)` 줄로 손 종류를 확인하세요. **왼손 로봇을 오른손 모드로 구동하면 손가락이 90° 굽혀집니다.**
+- 종료는 런처를 실행한 터미널에서 `Ctrl+C`.
+
+### 압력센서 화면 (v3)
+
+V6의 18개 압력센서(손가락마다 3개, 손바닥 3개)를 V6 손바닥 렌더 위에 표시합니다. 원익 `allegro_hand_sensor_visualizer` 와 같은 구성(검은 배경, 손 이미지, 원익 로고)입니다.
+
+- 값은 **접촉 압력(kPa)** 입니다. 센서는 대기압(약 1013~1024 hPa, 센서마다 조금 다름)을 읽으므로, 시작할 때 손에 아무것도 닿지 않은 상태의 값을 기준으로 뺍니다. 다시 잡으려면 **T**.
+- 색은 0~40 kPa 구간입니다(세게 누르면 약 50 kPa).
+- 500 hPa 아래로 읽히는 채널은 **신호 없음(회색 `--`)** 으로 표시합니다. 센서나 배선에 문제가 있는 채널입니다.
+- **N** 을 누르면 채널 번호가 표시됩니다. 손끝이 각 손가락의 첫 채널(0, 3, 6, 9, 12)이라는 것은 드라이버 기준으로 확인됐고, **가운데·기저 마디의 순서와 손바닥 3개의 위치는 아직 확인 전**입니다. 마디를 하나씩 눌러 보고 맞지 않으면 `assets/v6_tactile_layout.json` 의 해당 항목 좌표를 바꾸면 됩니다.
+- 토픽은 자동으로 찾습니다(이름이 `tactile_pressures` 로 끝나는 토픽). 지정하려면 `--tactile-topic`.
+
+### 떨림 대응 (v3)
+
+손끝 거리를 맞추는 방식은 MediaPipe 좌표의 프레임별 노이즈에 민감해서, 그대로 두면 로봇이 떱니다. v3 리타게팅 노드는 좌표를 DexPilot에 넣기 전에 **중앙값(기본 5프레임) + EMA(기본 0.3)** 로 거릅니다. 손을 멈춘 구간에서 측정한 떨림이 13.8 → 5.9 mrad/프레임으로 줄었습니다(입력 노이즈 3 mm 기준). 추적이 0.3초 이상 끊기면 DexPilot의 이전 해도 버립니다.
+
+| 상황 | 옵션 |
+|---|---|
+| 아직 떤다 | `--smooth 9 --ema 0.2` |
+| 반응이 굼뜨다 | `--smooth 3 --ema 0.5` 또는 `--retarget-alpha 0.6` |
+
+### 이전 버전 명령
+
+```bash
+./run_dashboard.sh real              # 대시보드 + RViz2 (v2: 압력 화면·평활화 없음)
+./run_cockpit_v2.sh real             # 콕핏 UI + DexPilot 리타게팅
+./run_cockpit.sh real                # 콕핏 UI (v1 리타게팅)
+./run_teleop.sh real --cockpit --record   # 콕핏 + 데이터셋 녹화
+```
+
+---
+
+## v2 리타게팅 (핀칭)
+
+v1(`retargeting_node.py`)은 MediaPipe 뼈대 각도를 게인·보간표로 관절값에 옮기는
+기하 매핑이라, 로봇 지문이 실제로 어디 놓이는지는 확인하지 않습니다. 그래서
+화면에서는 핀칭 자세가 나와도 실물에서는 집히지 않고, **엄지가 안쪽으로 덜
+굽혀집니다**(엄지 `joint01`이 −0.65 rad에서 막힘, 핀치에 필요한 값은 −1.0 rad).
+
+v2는 MANUS 텔레옵 프로젝트(`~/v6f_manuse_teleoperation/V6_Teleoperation`)의
+DexPilot 리타게팅을 그대로 가져다 씁니다. 매 프레임 최적화로 로봇 지문을 작업자
+지문 위치에 맞춥니다. 참조하는 URDF는 이 저장소의 `urdf/allegro_hand_v6_right.urdf`와
+바이트 단위로 동일합니다 — URDF가 틀린 게 아니라 v1 매핑이 그 범위를 안 쓰고
+있었습니다.
+
+작업자 지문이 2.2 mm까지 붙은 프레임에서 로봇 지문 사이 거리 (`tools/check_pinch_v2.py`):
+
+| | v1 (기하 매핑) | v2 (DexPilot) |
+|---|---|---|
+| 엄지–검지 지문 거리 | **129 mm** | **6 mm** |
+| 엄지 `joint01` | −0.40 rad | −1.01 rad |
+
+2026-09-30 실물 V6 핸드에서 확인했습니다.
+
+```bash
+./run_dashboard.sh real       # 대시보드 + RViz2 + DexPilot  ← v2로 전환됨
+./run_cockpit_v2.sh real      # 콕핏 + DexPilot
+./run_teleop_v2.sh sim --hand right
+./run_dashboard.sh real --v1  # 대시보드를 예전 기하 매핑으로 되돌리고 싶을 때
+
+./run_dashboard.sh real --retarget-alpha 0.6   # 반응 속도 ↑ (지연 100→22 ms)
+```
+
+**반응이 굼뜨면 `--retarget-alpha`부터 올리세요.** DexPilot 출력 필터가 전체 지연
+(~190 ms)의 절반을 차지합니다. 갱신 주기는 카메라가 천장이고 이 노트북 웹캠은
+모든 포맷에서 30 fps가 최대라 `--fps 60`은 효과가 없습니다 — 측정값과 나머지
+조정 방법은 [`docs/dexpilot_retargeting_v2.md`의 제어 속도 / 지연](docs/dexpilot_retargeting_v2.md#제어-속도--지연)에 있습니다.
+
+**`run_dashboard.sh`만 v2로 전환했습니다.** `run_cockpit.sh`와 `run_teleop.sh`는
+일부러 v1 그대로 두었고, v2로 돌리려면 `run_cockpit_v2.sh` / `run_teleop_v2.sh`를
+쓰면 됩니다. v1 노드와 스크립트는 전부 남아 있습니다. 자세한 내용(월드
+랜드마크 토픽, 스케일 측정, 좌우 반전, 인터프리터가 둘인 이유, 추가된 파일 목록)은
+[`docs/dexpilot_retargeting_v2.md`](docs/dexpilot_retargeting_v2.md)에 있습니다.
 
 ---
 
@@ -99,7 +178,9 @@ flowchart LR
 | 파일 | 역할 |
 |---|---|
 | `run_teleop.sh` | 통합 런처 (환경 source, 카메라·손 종류 감지, 노드 기동, 종료 정리) |
-| `run_cockpit.sh`, `run_dashboard.sh` | UI별 런처 |
+| `run_cockpit.sh` | 콕핏 런처 (v1 리타게팅) |
+| `run_dashboard.sh` | 대시보드 런처. **v2(DexPilot) 파이프라인으로 실행**, `--v1`로 예전 동작 |
+| `run_teleop_v2.sh`, `run_cockpit_v2.sh`, `run_dashboard_v2.sh` | v2 런처 ([v2 리타게팅](#v2-리타게팅-핀칭)) |
 | `launch/allegro_hand_bringup.launch.py` | ros2_control 브링업 (드라이버 패키지를 건드리지 않음) |
 | `config/teleop.env` | 이 PC의 기본값 (워크스페이스·IP·인터페이스·기본 옵션) |
 | `teleop_cockpit.py` | 콕핏 UI (카메라 + MediaPipe + OpenGL 3D 뷰) |
@@ -135,7 +216,9 @@ RViz2, 콕핏 3D 뷰, 게이지, 녹화는 모두 `/allegro/joint_states_urdf`�
 
 ## 실행 옵션
 
-`./run_teleop.sh [nodes|sim|real] [options]` (`run_cockpit.sh`, `run_dashboard.sh`도 같은 옵션)
+`./run_teleop.sh [nodes|sim|real] [options]` (`run_cockpit.sh`, `run_dashboard.sh`,
+`run_teleop_v2.sh` 계열도 같은 옵션. v2 런처는 DexPilot 전용 옵션이 몇 개 더
+있습니다 — `--help` 참고)
 
 | 옵션 | 설명 | 기본값 |
 |---|---|---|
@@ -229,7 +312,7 @@ RViz2의 기본 Orbit 카메라입니다. 조작 전에 RViz2 창을 한 번 클
 | 파이썬 환경 | 컨테이너에 pip 전역 설치 | `.venv` (`--system-site-packages`), numpy 1.26.4 고정 |
 | OpenGL | `LIBGL_ALWAYS_SOFTWARE=1` 전역 + 콕핏만 PRIME | 전역 소프트웨어 렌더링 없음(Mesa 사용 가능). 콕핏만 PRIME 오프로드 |
 | rmw | CycloneDDS 강제 | 설치되어 있으면 CycloneDDS, 없으면 기본 rmw로 진행 |
-| 하드코딩 경로 | `/home/humble_ws`, `/home/jake/humble_ws` | 전부 `config/teleop.env` + 스크립트 상대 경로 |
+| 하드코딩 경로 | `/home/humble_ws`, `~/humble_ws` | 전부 `config/teleop.env` + 스크립트 상대 경로 |
 | 녹화 경로 | `/home/humble_ws/pinn_hw/results/episodes` | `<저장소>/data/episodes` |
 | V4 (4지) 지원 | `run_v4.sh` 포함 | 제외 (이 PC는 V6 5지 하드웨어) |
 

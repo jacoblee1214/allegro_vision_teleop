@@ -24,7 +24,7 @@ V4(4지, SocketCAN) 런처와 노드는 가져오지 않았습니다. 이 PC의 
 
 ## 코드 수정 지점
 
-1. **경로**: `/home/humble_ws/...`, `/home/jake/humble_ws/...` 하드코딩 제거.
+1. **경로**: `/home/humble_ws/...`, `~/humble_ws/...` 하드코딩 제거.
    - URDF: `$AVT_URDF_DIR` → `<저장소>/urdf` → `allegro_hand_v6_description` share 순으로 탐색
    - 메쉬: `$AVT_MESH_DIR` → `<저장소>/meshes`(심볼릭 링크) → 패키지 share 순으로 탐색
    - 녹화: `/home/humble_ws/pinn_hw/results/episodes` → `$AVT_EPISODE_DIR` 또는 `<저장소>/data/episodes`

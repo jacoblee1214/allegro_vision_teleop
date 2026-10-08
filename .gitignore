@@ -25,3 +25,6 @@ Thumbs.db
 
 # Scratch
 scratch/
+
+# Company logo: kept local (trademark), the dashboard shows it when present
+assets/wonik_logo.png
