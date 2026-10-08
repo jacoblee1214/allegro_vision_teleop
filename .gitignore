@@ -9,9 +9,15 @@ log/
 
 # Environments
 .env
-.venv
+.venv/
 env/
 venv/
+
+# Recorded datasets
+data/
+
+# Local symlink to the driver package meshes
+meshes
 
 # OS metadata
 .DS_Store
@@ -20,14 +26,5 @@ Thumbs.db
 # Scratch
 scratch/
 
-# Local symlinks
-meshes
-
-# Internal / dev-only files (kept locally, not published)
-HANDOFF_5FINGER_UPGRADE_PROMPT.md
-IROS_2026_Allegro_Teleop.pptx
-make_ppt.py
-run_gui.sh
-test_thumb_diag.py
-test_thumb_direct.py
-demo_thumb_poses.py
+# Company logo: kept local (trademark), the dashboard shows it when present
+assets/wonik_logo.png

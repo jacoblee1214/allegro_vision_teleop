@@ -7,17 +7,12 @@ applies an Exponential Moving Average (EMA) low-pass filter to smooth commands a
 the physical hardware motors from noise / sudden jerks, and publishes to
 `/allegro_hand_position_controller/commands`.
 
-This node is the single place that converts between URDF and motor coordinates.
-  - Command path  (URDF -> motor): real + left hand, MCP joint11/21/31/41 -= pi/2
-  - Feedback path (motor -> URDF): `/joint_states` -> `/allegro/joint_states_urdf` with the inverse offset.
-    robot_state_publisher (RViz), cockpit/dashboard 3D views and the dataset recorder all read this topic.
-
 EMA Formula:
     Filtered_Angle = (alpha * New_Angle) + ((1 - alpha) * Previous_Filtered_Angle)
 
 Usage (inside container):
-    source /opt/ros/jazzy/setup.bash && source ~/v6f_manuse_teleoperation/install/setup.bash
-    python3 ~/allegro_vision_teleop_jazzy/sim_bridge_node.py [--alpha 0.15]
+    source /opt/ros/humble/setup.bash && source /home/humble_ws/install/setup.bash
+    python3 /home/humble_ws/allegro_vision_teleop/humble/sim_bridge_node.py [--alpha 0.15]
 """
 from __future__ import annotations
 
@@ -32,18 +27,15 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 import json
-from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray, String
 
-# Import safety_utils from this script's directory
+# Dynamically import safety_utils_v6 from this script's directory
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from safety_utils import CONTROLLER_JOINT_ORDER, JOINT_LIMITS, N_JOINTS
+from safety_utils_v6 import CONTROLLER_JOINT_ORDER, JOINT_LIMITS, N_JOINTS
 
 INPUT_TOPIC = "/allegro/target_joints"
 OUTPUT_TOPIC = "/allegro_hand_position_controller/commands"
-STATE_TOPIC = "/allegro/teleop_state"  # same topic the cockpit/dashboard/retargeting use
-JOINT_STATES_TOPIC = "/joint_states"
-JOINT_STATES_URDF_TOPIC = "/allegro/joint_states_urdf"
+STATE_TOPIC = "/allegro_teleop/state"
 DEFAULT_ALPHA = 0.25
 DEFAULT_RATE = 100.0  # Hz (matches controller_manager 100Hz update_rate)
 
@@ -51,7 +43,6 @@ DEFAULT_RATE = 100.0  # Hz (matches controller_manager 100Hz update_rate)
 
 # Left hand physical hardware MCP motor offset (-90 deg) intentionally configured by developer
 LEFT_MCP_JOINT_INDICES: tuple[int, ...] = (5, 9, 13, 17)  # joint11, joint21, joint31, joint41
-LEFT_MCP_JOINT_NAMES: tuple[str, ...] = ("joint11", "joint21", "joint31", "joint41")
 MOTOR_OFFSET_90DEG: float = 1.5707963267948966  # 90 degrees in radians
 
 
@@ -113,10 +104,6 @@ class SimBridgeNode(Node):
             BRIDGE_QOS,
         )
 
-        # Feedback relay: hardware /joint_states (motor coordinates) -> URDF coordinates
-        self._pub_js_urdf = self.create_publisher(JointState, JOINT_STATES_URDF_TOPIC, BRIDGE_QOS)
-        self._sub_js = self.create_subscription(JointState, JOINT_STATES_TOPIC, self._joint_states_callback, BRIDGE_QOS)
-
         # High-frequency timer loop ensuring constant command frequency to hardware
         timer_period = 1.0 / self.rate
         self._timer = self.create_timer(timer_period, self._control_loop_tick)
@@ -137,9 +124,6 @@ class SimBridgeNode(Node):
             state = json.loads(msg.data)
             new_hand = state.get("hand_side")
             if new_hand and new_hand in ("left", "right") and new_hand != self.hand_side:
-                if self.mode == "real":
-                    # Physical hand is fixed; never drop/apply the left MCP motor offset at runtime
-                    return
                 self.hand_side = new_hand
                 self._filtered_angles = None  # Reset filter history on hand switch
                 self.get_logger().info(
@@ -148,16 +132,6 @@ class SimBridgeNode(Node):
 
         except Exception as e:
             self.get_logger().error(f"Failed to parse teleop_state message in bridge: {e}")
-
-    def _joint_states_callback(self, msg: JointState) -> None:
-        """Republish /joint_states in URDF coordinates (inverse of the command-path motor offset)."""
-        if self.mode == "real" and self.hand_side == "left":
-            positions = list(msg.position)
-            for i, name in enumerate(msg.name):
-                if i < len(positions) and name.removeprefix("ah_") in LEFT_MCP_JOINT_NAMES:
-                    positions[i] += MOTOR_OFFSET_90DEG
-            msg.position = positions
-        self._pub_js_urdf.publish(msg)
 
     def _target_joints_callback(self, msg: Float64MultiArray) -> None:
         if len(msg.data) != N_JOINTS:

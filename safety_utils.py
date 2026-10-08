@@ -1,18 +1,10 @@
 """
-safety_utils.py — Allegro Hand v4 joint mapping, limits, and safety primitives.
+safety_utils.py — Allegro Hand V6 / 5-Finger Robot Hand joint mapping, limits, and safety primitives (20-DOF).
 
-Joint naming sources:
-  - URDF: /home/humble_ws/src/allegro_hand_hardwares/v4/description/urdf/allegro_hand_description_right.xacro
-  - SDK order: v4_hardware_interface.cpp sdk_ordered_joint_base_names
-  - readme: /home/humble_ws/src/allegro_hand_hardwares/v4/hardware/readme.md
-
-Key verified facts:
-  HW URDF: joint00~03 = Thumb, joint10~13 = Index(ff), joint20~23 = Middle(mf), joint30~33 = Ring(rf)
-  SDK internal order: [Index(0~3), Middle(4~7), Ring(8~11), Thumb(12~15)]
-    → matches sim flat order (CLAUDE.md: ff=0~3, mf=4~7, rf=8~11, th=12~15) exactly.
-  ROS2 controller command order (yaml): [Thumb(0~3), Index(4~7), Middle(8~11), Ring(12~15)]
-    → does NOT match sim flat order. Use sim_flat_to_cmd_idx() to convert.
-  Joint limits: HW URDF == sim MuJoCo right_hand.xml (verified identical).
+Joint naming sources & convention:
+  - V6 URDF: joint00~03 = Thumb, joint10~13 = Index, joint20~23 = Middle, joint30~33 = Ring, joint40~43 = Pinky
+  - Controller command order: [Thumb(0~3), Index(4~7), Middle(8~11), Ring(12~15), Pinky(16~19)]
+  - Sim flat order: [Index(0~3), Middle(4~7), Ring(8~11), Pinky(12~15), Thumb(16~19)]
 """
 from __future__ import annotations
 
@@ -20,56 +12,106 @@ import numpy as np
 from typing import NamedTuple
 
 # ─── Controller command order (from ros2_controllers.yaml joints list) ────────
-# Index into a 16-dim command vector sent to ForwardCommandController.
+# Index into a 20-dim command vector sent to ForwardCommandController / JointGroupPositionController.
 CONTROLLER_JOINT_ORDER: list[str] = [
-    "ah_joint00", "ah_joint01", "ah_joint02", "ah_joint03",  # Thumb  (sim 12~15)
-    "ah_joint10", "ah_joint11", "ah_joint12", "ah_joint13",  # Index  (sim 0~3)
-    "ah_joint20", "ah_joint21", "ah_joint22", "ah_joint23",  # Middle (sim 4~7)
-    "ah_joint30", "ah_joint31", "ah_joint32", "ah_joint33",  # Ring   (sim 8~11)
+    "joint00", "joint01", "joint02", "joint03",  # Thumb (0~3)
+    "joint10", "joint11", "joint12", "joint13",  # Index (4~7)
+    "joint20", "joint21", "joint22", "joint23",  # Middle (8~11)
+    "joint30", "joint31", "joint32", "joint33",  # Ring (12~15)
+    "joint40", "joint41", "joint42", "joint43",  # Pinky (16~19)
 ]
-N_JOINTS: int = 16
+N_JOINTS: int = 20
 
-# ─── Joint limits (rad) ────────────────────────────────────────────────────────
-# HW URDF == sim MuJoCo limits (verified identical).
-# Keys are HW joint names (ah_joint{N}{M}).
-JOINT_LIMITS: dict[str, tuple[float, float]] = {
-    # Thumb (joint00~03)
-    "ah_joint00": ( 0.263,  1.396),
-    "ah_joint01": (-0.105,  1.163),
-    "ah_joint02": (-0.189,  1.644),
-    "ah_joint03": (-0.162,  1.719),
-    # Index / ff (joint10~13)
-    "ah_joint10": (-0.470,  0.470),
-    "ah_joint11": (-0.196,  1.610),
-    "ah_joint12": (-0.174,  1.709),
-    "ah_joint13": (-0.227,  1.618),
-    # Middle / mf (joint20~23)
-    "ah_joint20": (-0.470,  0.470),
-    "ah_joint21": (-0.196,  1.610),
-    "ah_joint22": (-0.174,  1.709),
-    "ah_joint23": (-0.227,  1.618),
-    # Ring / rf (joint30~33)
-    "ah_joint30": (-0.470,  0.470),
-    "ah_joint31": (-0.196,  1.610),
-    "ah_joint32": (-0.174,  1.709),
-    "ah_joint33": (-0.227,  1.618),
+# ─── Right Hand Joint Limits (exact URDF-verified from allegro_hand_v6_right.urdf) ──────────
+JOINT_LIMITS_RIGHT: dict[str, tuple[float, float]] = {
+    # Thumb (joint00~03): joint00=abduction/opposition, joint01=elevation/inward swing, joint02/03=flexion
+    "joint00": (-0.035,  1.658),
+    "joint01": (-1.658,  1.658),
+    "joint02": (-0.175,  1.309),
+    "joint03": (-0.175,  1.396),
+    # Index (joint10~13): joint10=abduction, joint11=MCP flexion, joint12=PIP, joint13=DIP
+    "joint10": (-0.384,  1.309),
+    "joint11": (-0.070,  1.571),
+    "joint12": (-0.175,  1.396),
+    "joint13": (-0.175,  1.396),
+    # Middle (joint20~23)
+    "joint20": (-1.135,  1.135),
+    "joint21": (-0.070,  1.571),
+    "joint22": (-0.175,  1.396),
+    "joint23": (-0.175,  1.396),
+    # Ring (joint30~33)
+    "joint30": (-1.309,  0.384),
+    "joint31": (-0.070,  1.571),
+    "joint32": (-0.175,  1.396),
+    "joint33": (-0.175,  1.396),
+    # Pinky (joint40~43)
+    "joint40": (-1.309,  0.436),
+    "joint41": (-0.070,  1.571),
+    "joint42": (-0.175,  1.396),
+    "joint43": (-0.175,  1.396),
 }
+for _k, _v in list(JOINT_LIMITS_RIGHT.items()):
+    JOINT_LIMITS_RIGHT[f"ah_{_k}"] = _v
+
+# ─── Left Hand Joint Limits (exact URDF/HW-verified for allegro_hand_v6_left) ────────────────
+JOINT_LIMITS_LEFT: dict[str, tuple[float, float]] = {
+    # Thumb (joint00~03): opposition (-0.035~1.658, matching CAD right limit), elevation (-1.658~1.658), flexion (-0.175~1.400)
+    "joint00": (-0.035,  1.658),
+    "joint01": (-1.658,  1.658),
+    "joint02": (-0.175,  1.400),
+    "joint03": (-0.175,  1.400),
+    # Index (joint10~13): negative spreads outward, joint11 supports physical -90 deg offset (-1.658)
+    "joint10": (-1.309,  0.384),
+    "joint11": (-1.658,  1.571),
+    "joint12": (-0.175,  1.396),
+    "joint13": (-0.175,  1.396),
+    # Middle (joint20~23)
+    "joint20": (-1.135,  1.135),
+    "joint21": (-1.658,  1.571),
+    "joint22": (-0.175,  1.396),
+    "joint23": (-0.175,  1.396),
+    # Ring (joint30~33): positive spreads outward
+    "joint30": (-0.384,  1.309),
+    "joint31": (-1.658,  1.571),
+    "joint32": (-0.175,  1.396),
+    "joint33": (-0.175,  1.396),
+    # Pinky (joint40~43): positive spreads outward
+    "joint40": (-0.436,  1.309),
+    "joint41": (-1.658,  1.571),
+    "joint42": (-0.175,  1.396),
+    "joint43": (-0.175,  1.396),
+}
+for _k, _v in list(JOINT_LIMITS_LEFT.items()):
+    JOINT_LIMITS_LEFT[f"ah_{_k}"] = _v
+
+def get_joint_limits(hand_side: str = "right") -> dict[str, tuple[float, float]]:
+    """Returns hand-specific joint limits dictionary ('left' or 'right')."""
+    return JOINT_LIMITS_LEFT if hand_side.lower() == "left" else JOINT_LIMITS_RIGHT
+
+# JOINT_LIMITS provides a safe union envelope for fallback/generic controllers:
+JOINT_LIMITS: dict[str, tuple[float, float]] = {
+    k: (min(JOINT_LIMITS_LEFT[k][0], JOINT_LIMITS_RIGHT[k][0]),
+        max(JOINT_LIMITS_LEFT[k][1], JOINT_LIMITS_RIGHT[k][1]))
+    for k in CONTROLLER_JOINT_ORDER
+}
+for _k, _v in list(JOINT_LIMITS.items()):
+    JOINT_LIMITS[f"ah_{_k}"] = _v
 
 # ─── Safety thresholds ─────────────────────────────────────────────────────────
 TAU_MAX_NM: float = 0.7           # Nm hard limit per joint
 JOINT_LIMIT_MARGIN: float = 0.05  # 5% of range → zero-torque cutoff near limit
 TEMP_WARN_C: float = 60.0         # °C — log warning, continue
-TEMP_STOP_C: float = 70.0         # °C — emergency stop (tentative; verify with Wonik)
+TEMP_STOP_C: float = 70.0         # °C — emergency stop
 
 
 # ─── Mapping functions ─────────────────────────────────────────────────────────
 
-# N-digit to sim flat base: N=0(Thumb)→12, N=1(Index)→0, N=2(Middle)→4, N=3(Ring)→8
-_N_TO_FLAT_BASE: dict[int, int] = {0: 12, 1: 0, 2: 4, 3: 8}
+# N-digit to sim flat base: N=0(Thumb)→16, N=1(Index)→0, N=2(Middle)→4, N=3(Ring)→8, N=4(Pinky)→12
+_N_TO_FLAT_BASE: dict[int, int] = {0: 16, 1: 0, 2: 4, 3: 8, 4: 12}
 
 
 def hw_name_to_sim_flat(hw_name: str) -> int:
-    """Convert 'ah_joint{N}{M}' → sim flat index (0~15)."""
+    """Convert 'joint{N}{M}' or 'ah_joint{N}{M}' → sim flat index (0~19)."""
     base = hw_name.removeprefix("ah_")
     assert base.startswith("joint") and len(base) == 7, f"Bad joint name: {hw_name!r}"
     N, M = int(base[5]), int(base[6])
@@ -77,21 +119,24 @@ def hw_name_to_sim_flat(hw_name: str) -> int:
     return _N_TO_FLAT_BASE[N] + M
 
 
-def sim_flat_to_hw_name(flat: int) -> str:
-    """Convert sim flat index (0~15) → 'ah_joint{N}{M}'."""
-    assert 0 <= flat <= 15, f"flat out of range: {flat}"
+def sim_flat_to_hw_name(flat: int, prefix: str = "") -> str:
+    """Convert sim flat index (0~19) → '{prefix}joint{N}{M}'."""
+    assert 0 <= flat < N_JOINTS, f"flat out of range: {flat}"
     if flat < 4:    N, M = 1, flat       # Index
     elif flat < 8:  N, M = 2, flat - 4  # Middle
     elif flat < 12: N, M = 3, flat - 8  # Ring
-    else:           N, M = 0, flat - 12  # Thumb
-    return f"ah_joint{N}{M}"
+    elif flat < 16: N, M = 4, flat - 12 # Pinky
+    else:           N, M = 0, flat - 16 # Thumb
+    return f"{prefix}joint{N}{M}"
 
 
 # Pre-computed: sim flat index → position in CONTROLLER_JOINT_ORDER command vector
 _CTRL_ORDER_INDEX: dict[str, int] = {name: i for i, name in enumerate(CONTROLLER_JOINT_ORDER)}
+for _name in list(CONTROLLER_JOINT_ORDER):
+    _CTRL_ORDER_INDEX[f"ah_{_name}"] = _CTRL_ORDER_INDEX[_name]
 
 def sim_flat_to_cmd_idx(flat: int) -> int:
-    """Convert sim flat index → index in 16-dim ForwardCommandController command vector."""
+    """Convert sim flat index → index in 20-dim ForwardCommandController command vector."""
     return _CTRL_ORDER_INDEX[sim_flat_to_hw_name(flat)]
 
 
@@ -103,7 +148,7 @@ def cmd_idx_to_sim_flat(cmd_idx: int) -> int:
 # ─── Safety primitives ─────────────────────────────────────────────────────────
 
 def clamp_torques(tau: np.ndarray) -> tuple[np.ndarray, bool]:
-    """Clamp (16,) torque vector to [-TAU_MAX_NM, TAU_MAX_NM]. Returns (clamped, did_clamp)."""
+    """Clamp (20,) torque vector to [-TAU_MAX_NM, TAU_MAX_NM]. Returns (clamped, did_clamp)."""
     clamped = np.clip(tau, -TAU_MAX_NM, TAU_MAX_NM)
     return clamped, bool(np.any(np.abs(tau) > TAU_MAX_NM))
 
@@ -114,8 +159,8 @@ def apply_joint_limit_cutoff(
 ) -> np.ndarray:
     """
     Zero torque on joints within JOINT_LIMIT_MARGIN (5%) of their limit.
-    tau: (16,) in CONTROLLER_JOINT_ORDER.
-    positions: {hw_joint_name: position_rad} from JointState.
+    tau: (20,) in CONTROLLER_JOINT_ORDER.
+    positions: {joint_name: position_rad} from JointState.
     Returns modified tau.
     """
     tau = tau.copy()

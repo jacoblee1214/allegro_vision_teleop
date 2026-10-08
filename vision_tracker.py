@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """
-vision_tracker.py — ROS 2 Vision Publisher Node with Teleop HUD & Operator Controls.
+vision_tracker.py — ROS 2 Vision Publisher Node for 5-Finger Robot Hand (Allegro Hand V6) Retargeting.
 
 Features:
-- Captures RGB camera stream (/dev/video0 or user device).
-- Real-time hand landmark extraction via MediaPipe Hands (0~16: Wrist, Thumb, Index, Middle, Ring; 17~20 Pinky excluded).
-- Publishes 51-dim Float32MultiArray to `/allegro/vision/landmarks`.
-- Publishes RGB camera frame to `/allegro/camera/image_raw` for VLA dataset recording.
-- OpenCV HUD & Operator Control Keys:
-    * 'C' Key: Toggle Clutch (ENGAGED / RELEASED). When ENGAGED, freezes teleop joint tracking.
-    * 'R' Key: Toggle Recording (RECORDING 🔴 / IDLE ⚪).
-    * 'S' Key: Tag current/last episode as SUCCESS 🟢.
-    * 'F' Key: Tag current/last episode as FAIL 🔴.
+- Captures RGB stream from Intel RealSense (auto-detected) or standard webcam (/dev/video0).
+- Extracts full 21 3D hand landmarks via MediaPipe Hands (Thumb, Index, Middle, Ring, Pinky).
+- Publishes 63-dimensional Float32MultiArray to `/allegro/vision/landmarks`.
+- Publishes RGB camera frames to `/allegro/camera/image_raw` for VLA dataset collection.
+- Real-time OpenCV HUD & Operator Teleop Controls:
+    * 'C' Key: Toggle Clutch (ENGAGED / RELEASED). When ENGAGED, freezes robot hand movement (Hold).
+    * 'R' Key: Toggle Recording (RECORDING 🔴 / IDLE ⚪). Buffers teleop episode for VLA training.
+    * 'S' Key: Tag episode as SUCCESS 🟢.
+    * 'F' Key: Tag episode as FAIL 🔴.
     * 'Q' / ESC: Graceful exit.
-- Publishes teleop operator status (Clutch, Record, Tag) to `/allegro/teleop_state` as JSON string.
+- Publishes operator state (Clutch, Record, Tag, Ep#) to `/allegro/teleop_state`.
+- Scaled up window display (1.75x) for high visibility during live teleoperation.
 
 Usage:
-    python3 vision_tracker.py [--device 0] [--fps 60] [--no-gui]
+    python3 vision_tracker.py [--device auto] [--scale 1.75] [--fps 60] [--no-gui]
 """
 from __future__ import annotations
 
@@ -45,9 +46,9 @@ TOPIC_LANDMARKS = "/allegro/vision/landmarks"
 TOPIC_TELEOP_STATE = "/allegro/teleop_state"
 TOPIC_CAMERA_IMAGE = "/allegro/camera/image_raw"
 
-# 17 landmarks: 0 (Wrist), 1-4 (Thumb), 5-8 (Index), 9-12 (Middle), 13-16 (Ring)
-NUM_POINTS = 17
-NUM_COORDS = NUM_POINTS * 3  # 51 floats
+# 21 landmarks: 0 (Wrist), 1-4 (Thumb), 5-8 (Index), 9-12 (Middle), 13-16 (Ring), 17-20 (Pinky)
+NUM_POINTS = 21
+NUM_COORDS = NUM_POINTS * 3  # 63 floats
 
 VISION_QOS = QoSProfile(
     reliability=QoSReliabilityPolicy.RELIABLE,
@@ -62,12 +63,75 @@ STATE_QOS = QoSProfile(
 )
 
 
+def find_best_camera_device() -> tuple[int, str]:
+    """Auto-detect working camera device: prioritizes Intel RealSense, then probes active capture devices via OpenCV."""
+    import glob
+    import subprocess
+    import cv2
+
+    dev_paths = sorted(
+        glob.glob("/dev/video*"),
+        key=lambda p: int(p.replace("/dev/video", "")) if p.replace("/dev/video", "").isdigit() else 999,
+    )
+
+    # 1. First prioritize Intel RealSense RGB camera if connected
+    for dev in dev_paths:
+        dev_idx_str = dev.replace("/dev/video", "")
+        if not dev_idx_str.isdigit():
+            continue
+        idx = int(dev_idx_str)
+        try:
+            out = subprocess.check_output(
+                ["v4l2-ctl", "-d", dev, "--all"],
+                stderr=subprocess.DEVNULL,
+                timeout=0.5,
+            ).decode("utf-8", errors="ignore")
+            if "RealSense" in out and ("YUYV" in out or "white_balance" in out):
+                return idx, f"Intel RealSense RGB Camera (/dev/video{idx})"
+        except Exception:
+            pass
+
+    # 2. Probe working video capture devices using OpenCV
+    for dev in dev_paths:
+        dev_idx_str = dev.replace("/dev/video", "")
+        if not dev_idx_str.isdigit():
+            continue
+        idx = int(dev_idx_str)
+        try:
+            cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(idx)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None and frame.size > 0:
+                    name = "Camera"
+                    try:
+                        with open(f"/sys/class/video4linux/video{idx}/name") as f:
+                            name = f.read().strip()
+                    except Exception:
+                        pass
+                    return idx, f"{name} (/dev/video{idx})"
+        except Exception:
+            pass
+
+    return 0, "Default Camera (/dev/video0)"
+
+
 class VisionTrackerNode(Node):
-    def __init__(self, device_id: int = 0, target_fps: int = 60, gui: bool = True) -> None:
+    def __init__(self, device_id: int | str = "auto", gui: bool = True, scale: float = 1.75, fps: int = 60) -> None:
         super().__init__("vision_tracker")
-        self.device_id = device_id
-        self.target_fps = target_fps
+        if str(device_id).lower() in ("auto", "-1", "none", ""):
+            self.device_id, self.dev_desc = find_best_camera_device()
+        else:
+            self.device_id = int(device_id)
+            self.dev_desc = f"/dev/video{self.device_id}"
+
         self.gui = gui
+        self.scale = max(0.5, float(scale))
+        self.fps = max(15, int(fps))
+        self.window_name = "Allegro Hand V6 (5-Finger) Vision Tracker & Data Collector"
+        self._window_initialized = False
 
         # ROS 2 Publishers
         self._pub_landmarks = self.create_publisher(Float32MultiArray, TOPIC_LANDMARKS, VISION_QOS)
@@ -78,9 +142,8 @@ class VisionTrackerNode(Node):
             self._bridge = CvBridge()
         else:
             self._bridge = None
-            self.get_logger().warn("cv_bridge not available; image topic publishing will be disabled.")
 
-        # MediaPipe Hands Setup
+        # MediaPipe Hands Setup (21-point tracking)
         self.mp_hands = mp.solutions.hands
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_drawing_styles = mp.solutions.drawing_styles
@@ -92,19 +155,21 @@ class VisionTrackerNode(Node):
         )
 
         # Video Capture Setup
-        self.cap = cv2.VideoCapture(self.device_id)
+        self.cap = cv2.VideoCapture(self.device_id, cv2.CAP_V4L2)
         if not self.cap.isOpened():
-            self.get_logger().error(f"Failed to open video device /dev/video{self.device_id}")
-            raise RuntimeError(f"Cannot open webcam /dev/video{self.device_id}")
+            self.cap = cv2.VideoCapture(self.device_id)
+        if not self.cap.isOpened():
+            self.get_logger().error(f"Failed to open video device {self.dev_desc}")
+            raise RuntimeError(f"Cannot open camera {self.dev_desc}")
 
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+        self.cap.set(cv2.CAP_PROP_FPS, float(self.fps))
 
-        # Teleop & Recording State
+        # Teleop Operator States
         self.clutch_engaged: bool = False
         self.is_recording: bool = False
-        self.last_tag: str = "NONE"  # "NONE", "SUCCESS", "FAIL"
+        self.last_tag: str = "NONE"
         self.episode_counter: int = 0
         self.record_start_time: Optional[float] = None
 
@@ -114,20 +179,22 @@ class VisionTrackerNode(Node):
         self._last_fps_time = time.monotonic()
         self._current_fps = 0.0
 
-        # UI blinker timer
+        # UI blinker for recording indication
         self._blink_state = False
         self._last_blink_time = time.monotonic()
 
-        self.get_logger().info(f"Vision tracker initialized on /dev/video{self.device_id} (640x480 @ {self.target_fps}Hz)")
-        self.get_logger().info(f"Publishing landmarks -> '{TOPIC_LANDMARKS}'")
+        disp_w = int(640 * self.scale)
+        disp_h = int(480 * self.scale)
+        gui_str = f"GUI Window Active ({disp_w}x{disp_h}, scale={self.scale:.2f}x)" if self.gui else "Headless Mode"
+        self.get_logger().info(f"Vision tracker V6 initialized on {self.dev_desc} (640x480@{self.fps}fps) | {gui_str}")
+        self.get_logger().info(f"Publishing 21 landmarks (63-dim) -> '{TOPIC_LANDMARKS}'")
         self.get_logger().info(f"Publishing teleop state -> '{TOPIC_TELEOP_STATE}'")
-        self.get_logger().info(f"Publishing camera image -> '{TOPIC_CAMERA_IMAGE}'")
 
         # Initial state broadcast
         self.publish_teleop_state()
 
     def publish_teleop_state(self) -> None:
-        """Publishes the current teleop operator status as a structured JSON message."""
+        """Broadcasts operator status (Clutch, Record, Tag) as JSON."""
         state_payload = {
             "clutch": self.clutch_engaged,
             "clutch_state": "ENGAGED" if self.clutch_engaged else "RELEASED",
@@ -142,23 +209,22 @@ class VisionTrackerNode(Node):
         self._pub_state.publish(msg)
 
     def step(self) -> bool:
-        """Processes one video frame, tracks hand landmarks, publishes state & GUI. Returns False on quit."""
+        """Reads one frame, extracts 21 landmarks, renders HUD, handles operator keys."""
         ret, frame = self.cap.read()
         if not ret:
             self.get_logger().warn("Failed to grab video frame.")
             return False
 
-        # Flip horizontally for natural mirror interaction
         frame = cv2.flip(frame, 1)
         h, w, _ = frame.shape
 
-        # Convert BGR to RGB for MediaPipe inference
+        # Convert to RGB for MediaPipe
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         rgb_frame.flags.writeable = False
         results = self.hands.process(rgb_frame)
         rgb_frame.flags.writeable = True
 
-        # Compute FPS
+        # FPS calculation
         self._fps_counter += 1
         now = time.monotonic()
         if now - self._last_fps_time >= 1.0:
@@ -166,17 +232,18 @@ class VisionTrackerNode(Node):
             self._fps_counter = 0
             self._last_fps_time = now
 
-        # Toggle blink state every 500ms for recording indicator
+        # Toggle recording indicator blink every 500ms
         if now - self._last_blink_time >= 0.5:
             self._blink_state = not self._blink_state
             self._last_blink_time = now
 
         hand_detected = False
+        hand_landmarks = None
         if results.multi_hand_landmarks:
             hand_detected = True
             hand_landmarks = results.multi_hand_landmarks[0]
 
-            # Extract landmarks 0~16 (17 points total: Wrist + 4 fingers)
+            # Extract full 21 3D landmarks (Wrist 0, Thumb 1~4, Index 5~8, Middle 9~12, Ring 13~16, Pinky 17~20)
             coords: List[float] = []
             for i in range(NUM_POINTS):
                 lm = hand_landmarks.landmark[i]
@@ -188,76 +255,82 @@ class VisionTrackerNode(Node):
             self._pub_landmarks.publish(msg_lm)
             self._seq += 1
 
-            if self.gui:
-                # Draw MediaPipe hand skeleton
-                self.mp_drawing.draw_landmarks(
-                    frame,
-                    hand_landmarks,
-                    self.mp_hands.HAND_CONNECTIONS,
-                    self.mp_drawing_styles.get_default_hand_landmarks_style(),
-                    self.mp_drawing_styles.get_default_hand_connections_style(),
-                )
-
-                # Draw included landmarks (Green) vs excluded Pinky (Red)
-                for i in range(NUM_POINTS):
-                    lm = hand_landmarks.landmark[i]
-                    cx, cy = int(lm.x * w), int(lm.y * h)
-                    cv2.circle(frame, (cx, cy), 4, (0, 255, 0), -1)
-
-                for i in range(17, 21):
-                    lm = hand_landmarks.landmark[i]
-                    cx, cy = int(lm.x * w), int(lm.y * h)
-                    cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
-
-        # Publish Camera Image topic if bridge is available
+        # Publish camera frame for VLA dataset recorder
         if self._bridge is not None:
             try:
                 img_msg = self._bridge.cv2_to_imgmsg(frame, encoding="bgr8")
                 img_msg.header.stamp = self.get_clock().now().to_msg()
                 img_msg.header.frame_id = "camera_optical_frame"
                 self._pub_image.publish(img_msg)
-            except Exception as e:
-                self.get_logger().warn(f"Failed to publish camera image: {e}", throttle_duration_sec=5.0)
+            except Exception:
+                pass
 
-        # Always publish state periodically to keep subscribers updated
+        # Periodically publish teleop operator state
         self.publish_teleop_state()
 
-        # Render OpenCV HUD and handle keyboard interaction
         if self.gui:
-            # Draw HUD overlay background
-            hud_w, hud_h = 420, 155
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (10, 10), (10 + hud_w, 10 + hud_h), (25, 25, 25), -1)
-            cv2.addWeighted(overlay, 0.65, frame, 0.35, 0, frame)
-            cv2.rectangle(frame, (10, 10), (10 + hud_w, 10 + hud_h), (80, 80, 80), 1)
+            disp_w = int(w * self.scale)
+            disp_h = int(h * self.scale)
+            disp_frame = cv2.resize(frame, (disp_w, disp_h), interpolation=cv2.INTER_LINEAR)
 
-            # 1. Hand Tracking & FPS status
+            if not self._window_initialized:
+                cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+                cv2.resizeWindow(self.window_name, disp_w, disp_h)
+                self._window_initialized = True
+
+            # Draw MediaPipe hand mesh and 21 landmark points
+            if hand_landmarks is not None:
+                self.mp_drawing.draw_landmarks(
+                    disp_frame,
+                    hand_landmarks,
+                    self.mp_hands.HAND_CONNECTIONS,
+                    self.mp_drawing_styles.get_default_hand_landmarks_style(),
+                    self.mp_drawing_styles.get_default_hand_connections_style(),
+                )
+                point_radius = max(4, int(5 * (self.scale / 1.5)))
+                for i in range(NUM_POINTS):
+                    lm = hand_landmarks.landmark[i]
+                    cx, cy = int(lm.x * disp_w), int(lm.y * disp_h)
+                    cv2.circle(disp_frame, (cx, cy), point_radius, (0, 255, 0), -1)
+                    cv2.circle(disp_frame, (cx, cy), point_radius + 1, (255, 255, 255), 1)
+
+            # Draw HUD Overlay Box (Top-Left)
+            hud_w, hud_h = int(430 * (self.scale / 1.5)), int(155 * (self.scale / 1.5))
+            overlay = disp_frame.copy()
+            cv2.rectangle(overlay, (12, 12), (12 + hud_w, 12 + hud_h), (25, 25, 25), -1)
+            cv2.addWeighted(overlay, 0.70, disp_frame, 0.30, 0, disp_frame)
+            cv2.rectangle(disp_frame, (12, 12), (12 + hud_w, 12 + hud_h), (80, 80, 80), 1)
+
+            font_scale = 0.58 * (self.scale / 1.5)
+            y_base = int(20 * (self.scale / 1.5))
+            y_step = int(30 * (self.scale / 1.5))
+
+            # 1. Hand Tracking & FPS
             hand_color = (0, 255, 0) if hand_detected else (0, 140, 255)
-            hand_str = "TRACKING (17 pts)" if hand_detected else "SEARCHING..."
-            cv2.putText(frame, f"HAND: {hand_str}", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.55, hand_color, 2)
-            cv2.putText(frame, f"FPS: {self._current_fps:.1f}", (280, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 220, 220), 1)
+            hand_text = f"HAND: {'TRACKING (21 pts)' if hand_detected else 'SEARCHING...'}"
+            cv2.putText(disp_frame, hand_text, (20, y_base + y_step), cv2.FONT_HERSHEY_SIMPLEX, font_scale, hand_color, 2)
+            cv2.putText(disp_frame, f"FPS: {self._current_fps:.1f}", (int(290 * (self.scale / 1.5)), y_base + y_step), cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.9, (220, 220, 220), 1)
 
-            # 2. Clutch Status
+            # 2. Clutch Status (Pause robot hand hold)
             if self.clutch_engaged:
                 clutch_text = "CLUTCH: [ ENGAGED - PAUSED ]"
-                clutch_color = (0, 215, 255)  # Bright amber/yellow
+                clutch_color = (0, 215, 255)  # Bright amber
             else:
                 clutch_text = "CLUTCH: [ RELEASED - ACTIVE ]"
                 clutch_color = (0, 255, 0)  # Bright green
-            cv2.putText(frame, clutch_text, (20, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.58, clutch_color, 2)
+            cv2.putText(disp_frame, clutch_text, (20, y_base + y_step * 2), cv2.FONT_HERSHEY_SIMPLEX, font_scale * 1.05, clutch_color, 2)
 
             # 3. Recording Status
             if self.is_recording:
-                # Blinking REC dot
                 rec_dot_color = (0, 0, 255) if self._blink_state else (50, 50, 200)
                 rec_dur = time.monotonic() - (self.record_start_time or time.monotonic())
                 rec_text = f"RECORD: [ RECORDING ] (Ep #{self.episode_counter} | {rec_dur:.1f}s)"
+                cv2.circle(disp_frame, (int(410 * (self.scale / 1.5)), y_base + y_step * 3 - int(5 * self.scale / 1.5)), int(7 * (self.scale / 1.5)), rec_dot_color, -1)
                 rec_color = (0, 0, 255)
-                cv2.circle(frame, (390, 87), 7, rec_dot_color, -1)
             else:
                 rec_text = f"RECORD: [ IDLE ] (Total Ep: {self.episode_counter})"
                 rec_color = (180, 180, 180)
-            cv2.putText(frame, rec_text, (20, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.55, rec_color, 2)
+            cv2.putText(disp_frame, rec_text, (20, y_base + y_step * 3), cv2.FONT_HERSHEY_SIMPLEX, font_scale, rec_color, 2)
 
             # 4. Episode Tagging Status
             if self.last_tag == "SUCCESS":
@@ -269,39 +342,43 @@ class VisionTrackerNode(Node):
             else:
                 tag_color = (200, 200, 200)
                 tag_str = "NONE (Pending tag)"
-            cv2.putText(frame, f"LAST TAG: {tag_str}", (20, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.52, tag_color, 2)
+            cv2.putText(disp_frame, f"LAST TAG: {tag_str}", (20, y_base + y_step * 4), cv2.FONT_HERSHEY_SIMPLEX, font_scale * 0.95, tag_color, 2)
 
-            # 5. Hotkey shortcuts bar (Bottom of window)
-            hotkey_str = "[C] Clutch | [R] Record | [S] Tag Success | [F] Tag Fail | [Q] Quit"
-            cv2.putText(frame, hotkey_str, (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+            # 5. Hotkey shortcuts bar (Bottom)
             cv2.putText(
-                frame,
-                "Green: Active 4 fingers (0~16) | Red: Excluded Pinky (17~20)",
-                (10, h - 12),
+                disp_frame,
+                "Shortcuts: [C] Clutch (Hold Hand) | [R] Record Episode | [S] Tag Success | [F] Tag Fail | [Q] Quit",
+                (15, disp_h - int(30 * (self.scale / 1.5))),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.40,
-                (170, 170, 170),
+                font_scale * 0.85,
+                (255, 255, 255),
+                1,
+            )
+            cv2.putText(
+                disp_frame,
+                f"Camera: {self.dev_desc} | 5 Fingers Active: Thumb, Index, Middle, Ring, Pinky (21 keypoints)",
+                (15, disp_h - int(12 * (self.scale / 1.5))),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale * 0.75,
+                (180, 180, 180),
                 1,
             )
 
-            # Display Window
-            cv2.imshow("Allegro Hand V4 Vision Teleop & Data Collector", frame)
+            cv2.imshow(self.window_name, disp_frame)
             key = cv2.waitKey(1) & 0xFF
 
-            # Key Event Handling
-            if key == ord("q") or key == ord("Q") or key == 27:  # 'q' or ESC
-                self.get_logger().info("Quit requested via OpenCV GUI.")
+            # Key Actions
+            if key == ord("q") or key == ord("Q") or key == 27:
+                self.get_logger().info("Quit requested via GUI.")
                 return False
 
             elif key == ord("c") or key == ord("C"):
-                # Toggle Clutch
                 self.clutch_engaged = not self.clutch_engaged
-                state_str = "ENGAGED (Teleop Paused)" if self.clutch_engaged else "RELEASED (Teleop Resumed)"
+                state_str = "ENGAGED (Robot hand holding current pose)" if self.clutch_engaged else "RELEASED (Robot tracking live hand)"
                 self.get_logger().info(f"[OPERATOR] Clutch toggled -> {state_str}")
                 self.publish_teleop_state()
 
             elif key == ord("r") or key == ord("R"):
-                # Toggle Recording
                 self.is_recording = not self.is_recording
                 if self.is_recording:
                     self.episode_counter += 1
@@ -317,13 +394,11 @@ class VisionTrackerNode(Node):
                 self.publish_teleop_state()
 
             elif key == ord("s") or key == ord("S"):
-                # Tag Success
                 self.last_tag = "SUCCESS"
                 self.get_logger().info(f"[OPERATOR] 🟢 Episode #{self.episode_counter} tagged as SUCCESS!")
                 self.publish_teleop_state()
 
             elif key == ord("f") or key == ord("F"):
-                # Tag Fail
                 self.last_tag = "FAIL"
                 self.get_logger().warn(f"[OPERATOR] 🔴 Episode #{self.episode_counter} tagged as FAIL!")
                 self.publish_teleop_state()
@@ -340,15 +415,16 @@ class VisionTrackerNode(Node):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Allegro Hand V4 Vision Tracker & Data Collector Node")
-    parser.add_argument("--device", type=int, default=0, help="Webcam device ID (default: 0 for /dev/video0)")
-    parser.add_argument("--fps", type=int, default=60, help="Target camera frame rate (default: 60)")
-    parser.add_argument("--no-gui", action="store_true", help="Run without OpenCV imshow GUI window (headless mode)")
+    parser = argparse.ArgumentParser(description="Allegro Hand V6 (5-Finger) Vision Tracker Node")
+    parser.add_argument("--device", default="auto", help="Webcam device ID (default: auto for Intel RealSense)")
+    parser.add_argument("--scale", type=float, default=1.75, help="Window display scale factor (default: 1.75)")
+    parser.add_argument("--fps", type=int, default=60, help="Camera capture frame rate (default: 60)")
+    parser.add_argument("--no-gui", action="store_true", help="Run without OpenCV GUI window")
     args = parser.parse_args()
 
     rclpy.init()
     try:
-        node = VisionTrackerNode(device_id=args.device, target_fps=args.fps, gui=not args.no_gui)
+        node = VisionTrackerNode(device_id=args.device, gui=not args.no_gui, scale=args.scale, fps=args.fps)
     except Exception as e:
         print(f"[ERROR] Failed to start VisionTrackerNode: {e}", file=sys.stderr)
         rclpy.shutdown()

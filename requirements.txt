@@ -1,7 +1,15 @@
+# Pip dependencies for the native ROS 2 Jazzy (Ubuntu 24.04) install.
+#
+# Installed into ./.venv, which is created with --system-site-packages so that
+# rclpy / cv_bridge / PyQt5 keep coming from the apt ROS 2 Jazzy install.
+# Only what apt cannot provide is listed here.
+#
+# numpy is pinned to the 1.x that Ubuntu 24.04 and ROS 2 Jazzy already ship:
+# mediapipe 0.10.x does not work with numpy 2.x, and mixing a pip numpy 2.x into
+# a ROS 2 process breaks rclpy's C extensions.
+numpy==1.26.4
 mediapipe==0.10.14
-opencv-python>=4.8.0,<4.11
 opencv-contrib-python>=4.8.0,<4.11
-numpy>=1.21.0,<2.0.0
 scipy<1.14.0
-PyQt5>=5.15.0
 PyOpenGL>=3.1
+PyOpenGL-accelerate>=3.1

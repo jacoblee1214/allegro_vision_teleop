@@ -4,8 +4,7 @@ dataset_recorder.py — VLA Model Dataset Recorder Node for Allegro Hand Teleope
 
 Subscribes to:
   1. `/allegro/teleop_state` (std_msgs/msg/String): Clutch, Record, Tagging operator states
-  2. `/allegro/joint_states_urdf` (sensor_msgs/msg/JointState): Actual joint positions, velocities, efforts
-     in URDF coordinates (left MCP motor offset removed by sim_bridge_node, same frame as target_joints)
+  2. `/joint_states` (sensor_msgs/msg/JointState): Actual hardware joint positions, velocities, efforts
   3. `/allegro/target_joints` (std_msgs/msg/Float64MultiArray): Commanded target joint angles (20-dim V6 or 16-dim V4)
   4. `/allegro/vision/landmarks` (std_msgs/msg/Float32MultiArray): 3D hand keypoints (63-dim for V6, 51-dim for V4)
   5. `/allegro/camera/image_raw` (sensor_msgs/msg/Image, optional): Camera frame stream
@@ -14,12 +13,12 @@ Workflow:
   - When Operator presses 'R' in vision_tracker GUI, Record transitions to 'True' -> In-memory buffering begins.
   - While recording, synchronizes actual joint states, target joint commands, MediaPipe 3D coordinates, and clutch states.
   - When Operator toggles 'R' off -> Recording stops and episode is placed into pending buffer.
-  - When Operator presses 'S' (Success) -> Dumps the episode to `<repo>/data/episodes/episode_<timestamp>_ep<idx>_success.json`.
+  - When Operator presses 'S' (Success) -> Dumps the episode to `/home/humble_ws/pinn_hw/results/episodes/episode_<timestamp>_ep<idx>_success.json`.
   - When Operator presses 'F' (Fail) -> Dumps to `episode_<timestamp>_ep<idx>_fail.json` (or discards if --discard-failed).
   - Maintains `manifest.json` indexing all recorded episodes for easy VLA training pipeline loading.
 
 Usage:
-    python3 dataset_recorder.py [--sample-hz 100] [--dof 20] [--output-dir <dir>]
+    python3 dataset_recorder.py [--sample-hz 60] [--output-dir /home/humble_ws/pinn_hw/results/episodes]
 """
 from __future__ import annotations
 
@@ -41,15 +40,13 @@ from std_msgs.msg import Float32MultiArray, Float64MultiArray, String
 
 # Topic definitions
 TOPIC_TELEOP_STATE = "/allegro/teleop_state"
-TOPIC_JOINT_STATES = "/allegro/joint_states_urdf"
+TOPIC_JOINT_STATES = "/joint_states"
 TOPIC_TARGET_JOINTS = "/allegro/target_joints"
 TOPIC_LANDMARKS = "/allegro/vision/landmarks"
 TOPIC_CAMERA_IMAGE = "/allegro/camera/image_raw"
 
-# Episodes land inside this repo by default; override with $AVT_EPISODE_DIR or --output-dir.
-DEFAULT_OUTPUT_DIR = os.environ.get(
-    "AVT_EPISODE_DIR", str(Path(__file__).resolve().parent / "data" / "episodes")
-)
+DEFAULT_OUTPUT_DIR = "/home/humble_ws/pinn_hw/results/episodes"
+FALLBACK_OUTPUT_DIR = "/home/jake/humble_ws/pinn_hw/results/episodes"
 
 QOS_RELIABLE = QoSProfile(
     reliability=QoSReliabilityPolicy.RELIABLE,
@@ -89,7 +86,9 @@ class DatasetRecorderNode(Node):
     ) -> None:
         super().__init__("dataset_recorder_node")
 
-        target_path = Path(output_dir).expanduser()
+        target_path = Path(output_dir)
+        if not target_path.parent.exists() and Path(FALLBACK_OUTPUT_DIR).parent.exists():
+            target_path = Path(FALLBACK_OUTPUT_DIR)
         target_path.mkdir(parents=True, exist_ok=True)
         self.output_dir = target_path
 

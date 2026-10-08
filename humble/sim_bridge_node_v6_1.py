@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-sim_bridge_node.py — Controller Bridge Node with Low-Pass EMA Filter for 5-Finger Robot Hand (Allegro Hand V6).
+sim_bridge_node_v6_1.py — Controller Bridge Node with Low-Pass EMA Filter for 5-Finger Robot Hand (Allegro Hand V6).
 
 Subscribes to `/allegro/target_joints` (20-dim Float64MultiArray from retargeting_node),
 applies an Exponential Moving Average (EMA) low-pass filter to smooth commands and protect
 the physical hardware motors from noise / sudden jerks, and publishes to
 `/allegro_hand_position_controller/commands`.
 
-This node is the single place that converts between URDF and motor coordinates.
+v6_1: This node is the single place that converts between URDF and motor coordinates.
   - Command path  (URDF -> motor): real + left hand, MCP joint11/21/31/41 -= pi/2
   - Feedback path (motor -> URDF): `/joint_states` -> `/allegro/joint_states_urdf` with the inverse offset.
     robot_state_publisher (RViz), cockpit/dashboard 3D views and the dataset recorder all read this topic.
@@ -16,8 +16,8 @@ EMA Formula:
     Filtered_Angle = (alpha * New_Angle) + ((1 - alpha) * Previous_Filtered_Angle)
 
 Usage (inside container):
-    source /opt/ros/jazzy/setup.bash && source ~/v6f_manuse_teleoperation/install/setup.bash
-    python3 ~/allegro_vision_teleop_jazzy/sim_bridge_node.py [--alpha 0.15]
+    source /opt/ros/humble/setup.bash && source /home/humble_ws/install/setup.bash
+    python3 /home/humble_ws/allegro_vision_teleop/humble/sim_bridge_node.py [--alpha 0.15]
 """
 from __future__ import annotations
 
@@ -35,9 +35,9 @@ import json
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray, String
 
-# Import safety_utils from this script's directory
+# Dynamically import safety_utils_v6 from this script's directory
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from safety_utils import CONTROLLER_JOINT_ORDER, JOINT_LIMITS, N_JOINTS
+from safety_utils_v6 import CONTROLLER_JOINT_ORDER, JOINT_LIMITS, N_JOINTS
 
 INPUT_TOPIC = "/allegro/target_joints"
 OUTPUT_TOPIC = "/allegro_hand_position_controller/commands"

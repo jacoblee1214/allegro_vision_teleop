@@ -1,49 +1,32 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# run_dashboard.sh — Direct Launcher for Classic 2D Teleop Dashboard + RViz2
+# run_dashboard.sh — classic 2D dashboard plus a separate RViz2 window, on the latest pipeline.
 #
-# Usage:
-#   ./run_dashboard.sh [nodes|sim|real] [options]
-#   ./run_dashboard.sh --gui-only [options]   # Launch standalone Dashboard window only
+# This is the entry point that always follows the newest version. It now runs **v3**
+# (run_dashboard_v3.sh): DexPilot retargeting with smoothed landmarks, the tactile
+# pressure panel and the Wonik look. Details: README.md, "빠른 실행".
 #
-# Examples:
-#   ./run_dashboard.sh real              # Physical hardware + Classic Dashboard + RViz2
-#   ./run_dashboard.sh sim               # Mock simulation + Classic Dashboard + RViz2
-#   ./run_dashboard.sh real --hand left  # Left hand model
-# ==============================================================================
-set -e
+#   ./run_dashboard.sh                 # real hand, found automatically (right preferred)
+#   ./run_dashboard.sh sim --hand left
+#   ./run_dashboard.sh --v2            # previous pipeline: DexPilot, no tactile panel or smoothing
+#   ./run_dashboard.sh --v1            # oldest: geometric retargeting
+#
+# v1 mapped bone angles straight to joint angles and never checked where the robot's
+# fingertips ended up, so a pinch closed on screen and left the robot's thumb ~13 cm
+# short; v2 solves for the fingertip positions every frame (docs/dexpilot_retargeting_v2.md).
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+VERSION="v3"
+ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --v1) VERSION="v1" ;;
+        --v2) VERSION="v2" ;;
+        *)    ARGS+=("$arg") ;;
+    esac
+done
 
-# Check if standalone GUI only is requested
-if [ "$1" = "--gui-only" ]; then
-    shift
-    # Auto-delegation to Docker container if executed on host machine
-    if [ ! -f "/.dockerenv" ] && [ "${RUN_ON_HOST:-0}" != "1" ]; then
-        xhost +local:docker >/dev/null 2>&1 || true
-        if ! docker ps --format '{{.Names}}' | grep -q "^ros_humble_dev$"; then
-            echo "[*] Starting ros_humble_dev container..."
-            docker start ros_humble_dev >/dev/null
-        fi
-        DOCKER_FLAGS="-i"
-        if [ -t 0 ] && [ -t 1 ]; then
-            DOCKER_FLAGS="-it"
-        fi
-        exec docker exec $DOCKER_FLAGS \
-            -e DISPLAY="${DISPLAY:-:1}" \
-            ros_humble_dev /home/humble_ws/allegro_vision_teleop/run_dashboard.sh --gui-only "$@"
-    fi
-
-    # Inside Docker environment
-    if [ -f "/opt/ros/humble/setup.bash" ]; then
-        source /opt/ros/humble/setup.bash
-    fi
-    if [ -f "/home/humble_ws/install/setup.bash" ]; then
-        source /home/humble_ws/install/setup.bash
-    fi
-    export QT_QPA_PLATFORM_PLUGIN_PATH="/usr/lib/x86_64-linux-gnu/qt5/plugins/platforms"
-    exec python3 "$SCRIPT_DIR/teleop_dashboard_v6.py" "$@"
-fi
-
-# Default: Full pipeline with Classic Dashboard + RViz2
-exec "$SCRIPT_DIR/run_teleop_v6.sh" "$@" --classic
+case "$VERSION" in
+    v3) exec "$DIR/run_dashboard_v3.sh" "${ARGS[@]}" ;;
+    v2) exec "$DIR/run_teleop_v2.sh" "${ARGS[@]:-real}" --classic --rviz ;;
+    v1) exec "$DIR/run_teleop.sh" "${ARGS[@]:-real}" --classic --rviz ;;
+esac

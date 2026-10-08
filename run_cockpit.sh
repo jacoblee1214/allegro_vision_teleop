@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# run_cockpit.sh — Direct Launcher for Unified 3D Cockpit UI (Single Window)
-#
-# Usage:
-#   ./run_cockpit.sh [nodes|sim|real] [options]
-#
-# Examples:
-#   ./run_cockpit.sh real              # Physical hardware + Unified 3D Cockpit
-#   ./run_cockpit.sh sim               # Mock simulation + Unified 3D Cockpit
-#   ./run_cockpit.sh real --hand left  # Left hand model
-# ==============================================================================
-set -e
-
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-exec "$SCRIPT_DIR/run_teleop_v6.sh" "$@" --cockpit
+# run_cockpit.sh — single-window cockpit UI (embedded 3D hand, no separate RViz2).
+#   ./run_cockpit.sh real              # physical hand, hand type auto-detected
+#   ./run_cockpit.sh sim --hand left   # no hardware ('sim' has no auto-detect)
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+exec "$DIR/run_teleop.sh" "${@:-real}" --cockpit
