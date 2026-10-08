@@ -31,3 +31,15 @@ run_gui.sh
 test_thumb_diag.py
 test_thumb_direct.py
 demo_thumb_poses.py
+
+# Unfinished Humble experiments superseded by the Jazzy v3 pipeline (kept locally)
+run_cockpit_v6_4.sh
+run_cockpit_v6_5.sh
+run_dashboard_v6_2.sh
+run_dex.sh
+run_teleop_v6_4.sh
+run_teleop_v6_5.sh
+run_v6_4.sh
+run_v6_5.sh
+teleop_cockpit_v6_4.py
+teleop_dashboard_v6_2.py

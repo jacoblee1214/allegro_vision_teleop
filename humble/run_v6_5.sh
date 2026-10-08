@@ -1,1 +1,0 @@
-run_teleop_v6_5.sh
