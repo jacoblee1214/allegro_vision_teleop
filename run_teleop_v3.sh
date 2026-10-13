@@ -42,9 +42,8 @@
 #   sim             : mock_components bring-up + teleop nodes (no hand needed)
 #   real            : Modbus TCP bring-up on the physical hand + teleop nodes
 #
-# V6F_TELEOP_ROOT points at the MANUS checkout that owns the retargeting core
-# (default ~/v6f_manuse_teleoperation/V6_Teleoperation); set it in
-# config/teleop.env or config/teleop_v2.env if it lives elsewhere.
+# The retargeting runs on its own interpreter ($RETARGET_PY, default
+# .venv-retarget): dex_retargeting wants numpy 2.x and mediapipe wants 1.x.
 #
 # Run './run_teleop.sh --help' for the full option list.
 # ==============================================================================
@@ -153,7 +152,7 @@ DexPilot options (v2 only):
                        if the fingers start to jitter.
 
 Machine defaults live in config/teleop.env (ALLEGRO_WS, HAND_IP, ETH_IFACE, ...);
-v2-only ones in config/teleop_v2.env (V6F_TELEOP_ROOT, RETARGET_PY, SCALING, ...).
+v2-only ones in config/teleop_v2.env (RETARGET_PY, SCALING, ...).
 HELP
             exit 0 ;;
         *)
@@ -172,8 +171,6 @@ SCALE="${SCALE:-1.75}"
 CALIBRATE="${CALIBRATE:-150}"
 RETARGET_ALPHA="${RETARGET_ALPHA:-}"
 UNDO_MIRROR="${UNDO_MIRROR:-true}"
-V6F_TELEOP_ROOT="${V6F_TELEOP_ROOT:-$HOME/v6f_manuse_teleoperation/V6_Teleoperation}"
-export V6F_TELEOP_ROOT
 
 # RViz default follows the UI: the cockpit draws its own 3D hand.
 if [ -z "$USE_RVIZ" ]; then
@@ -238,17 +235,16 @@ fi
 # pinocchio are built against numpy 2.x, and this repo's venv is pinned to
 # numpy 1.x for mediapipe. One interpreter cannot hold both, but they are two
 # processes talking over ROS topics, so each gets the one it needs.
-RETARGET_PY="${RETARGET_PY:-$V6F_TELEOP_ROOT/.venv/bin/python}"
+RETARGET_PY="${RETARGET_PY:-$REPO_DIR/.venv-retarget/bin/python}"
 if [ ! -x "$RETARGET_PY" ]; then
-    echo "[!] No DexPilot interpreter at $RETARGET_PY."
-    echo "[!] Point V6F_TELEOP_ROOT at the MANUS teleop checkout (the directory"
-    echo "[!] holding src/v6f_teleop and urdf/v6_force), or set RETARGET_PY to a"
-    echo "[!] python that can import dex_retargeting."
+    echo "[!] No retargeting interpreter at $RETARGET_PY."
+    echo "[!] Run ./tools/setup.sh once to build it, or set RETARGET_PY to a"
+    echo "[!] python that has dex_retargeting and pinocchio."
     exit 1
 fi
 if ! "$RETARGET_PY" -c "import dex_retargeting, pinocchio" >/dev/null 2>&1; then
     echo "[!] $RETARGET_PY cannot import dex_retargeting / pinocchio."
-    echo "[!] In $V6F_TELEOP_ROOT:  .venv/bin/pip install -e ."
+    echo "[!] $RETARGET_PY -m pip install -r requirements-retarget.txt"
     exit 1
 fi
 
@@ -313,7 +309,7 @@ echo " UI mode    : $UI_MODE"
 echo " RViz2      : $([ "$USE_RVIZ" = true ] && echo "enabled (separate window)" || echo "disabled")"
 echo " Python     : $PY"
 echo " Retarget   : $RETARGET_PY"
-echo " DexPilot   : $V6F_TELEOP_ROOT  (scaling: ${SCALING:-measured over $CALIBRATE frames}, undo-mirror: $UNDO_MIRROR)"
+echo " DexPilot   : retarget/v6.yaml  (scaling: ${SCALING:-measured over $CALIBRATE frames}, undo-mirror: $UNDO_MIRROR)"
 echo " Filters    : retarget alpha ${RETARGET_ALPHA:-0.25 (config)} @ camera rate, bridge EMA $ALPHA @ ${RATE} Hz"
 echo " ROS        : ${ROS_DISTRO:-?}   rmw: ${RMW_IMPLEMENTATION:-default}"
 echo "========================================================"

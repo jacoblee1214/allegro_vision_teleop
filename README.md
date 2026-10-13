@@ -60,7 +60,7 @@ colcon build --symlink-install --base-paths src
 
 빌드가 실패하면 다음을 확인합니다.
 
-- **`--base-paths src`**: 3단계의 `V6_Teleoperation` 을 이 워크스페이스 안에 두면, 이 옵션 없이는 colcon이 그 안의 URDF 내보내기 패키지(`V6_Force_R` 등)까지 빌드하려다 실패합니다.
+- **`--base-paths src`**: `src` 밖에 다른 ROS 패키지가 섞여 있으면(예전에는 이 워크스페이스 안에 다른 프로젝트를 두었습니다) 이 옵션 없이는 colcon이 그것까지 빌드하려다 실패합니다.
 - **conda / miniforge**: `No module named 'catkin_pkg'` 가 나오고 오류에 conda 파이썬 경로가 보이면, CMake가 시스템 파이썬 대신 conda 파이썬을 잡은 것입니다. `conda deactivate` 를 하고 `VIRTUAL_ENV` 도 비운 셸에서 `build/` `install/` `log/` 를 지우고 다시 빌드합니다.
 - **빠진 파일**: 드라이버 소스를 git으로 받으면 빈 `allegro_hand_v6_description/usd/` 폴더가 빠져 설치 단계가 실패합니다(`mkdir` 로 만들면 됩니다). RViz에 `Could not load resource …/Finger01_Link01.STL` 이 뜨면 `meshes/` 에 `Finger0X_Link0Y.STL`, `Palm.STL` 이 있는지 확인합니다.
 
@@ -72,23 +72,18 @@ colcon build --symlink-install --base-paths src
 
 그래서 `launch/allegro_hand_bringup.launch.py` 는 `urdf/allegro_hand.urdf.xacro` 를 씁니다. 드라이버 bring-up xacro 와 같은데 손 모델만 이 저장소 `urdf/` 에서 읽고, `ros2_control` 블록은 드라이버 것을 그대로 include 합니다. 덕분에 RViz·컨트롤러·콕핏이 모두 같은 URDF 를 보고, 드라이버 패키지는 수정하지 않습니다.
 
-### 3. DexPilot 리타게팅 코어 (사내 MANUS 텔레옵 프로젝트)
+### 3. 리타게팅 (저장소에 포함, 공개 패키지만 씀)
 
-v2/v3 리타게팅은 사내 MANUS 텔레옵 프로젝트(`V6_Teleoperation`)의 리타게팅 코어, 튜닝된 설정, 손끝 패드 오프셋을 **복사하지 않고 그 경로에서 그대로 읽습니다.** 이 프로젝트는 별도로 받아야 합니다. DexPilot이 numpy 2.x를 쓰기 때문에 이 저장소의 `.venv`(numpy 1.x, mediapipe용)와 분리된 가상환경에서 돌립니다.
+v2/v3 리타게팅은 `retarget/` 에 들어 있고, 최적화는 공개 라이브러리
+[`dex_retargeting`](https://github.com/dexsuite/dex-retargeting)(MIT)이 합니다. 손끝 위치와 접촉 거리는
+`tools/measure_fingertips.py` 가 이 저장소의 메쉬에서 측정한 값이고 `retarget/v6.yaml` 에 있습니다. **따로 받아야 할 것은 없습니다.**
 
-```bash
-cd <V6_Teleoperation 위치>
-python3.12 -m venv .venv
-.venv/bin/pip install --upgrade pip
-.venv/bin/pip install -e .          # dex_retargeting, pinocchio 등. GeoRT 학습까지 쓰려면 -e ".[train]"
-```
-
-위치를 `config/teleop_v2.env` 에 적습니다.
+`dex_retargeting` 과 그 의존성 pinocchio 는 numpy 2.x 를, mediapipe 는 1.x 를 요구해서 한 환경에 둘 수 없습니다. 그래서 리타게팅만 별도
+가상환경(`.venv-retarget`)의 별도 프로세스로 돌고 나머지와는 ROS 토픽으로 이야기합니다. 4단계의 `tools/setup.sh` 가 둘 다 만듭니다.
 
 | 변수 | 의미 | 기본값 |
 |---|---|---|
-| `V6F_TELEOP_ROOT` | `V6_Teleoperation` 위치 | `~/v6f_manuse_teleoperation/V6_Teleoperation` |
-| `RETARGET_PY` | 리타게팅 노드를 돌릴 파이썬 | `$V6F_TELEOP_ROOT/.venv/bin/python` |
+| `RETARGET_PY` | 리타게팅 노드를 돌릴 파이썬 | `<저장소>/.venv-retarget/bin/python` |
 
 ### 4. 이 저장소
 
@@ -143,6 +138,24 @@ PC 유선 랜을 로봇과 같은 서브넷으로 설정합니다(예: `192.168.
 - 로그의 `[OK] Allegro Hand found: ... (right hand, ...)` 줄로 손 종류를 확인하세요. **왼손 로봇을 오른손 모드로 구동하면 손가락이 90° 굽혀집니다.**
 - 종료는 런처를 실행한 터미널에서 `Ctrl+C`.
 
+### 리타게팅이 맞는지 확인하기
+
+```bash
+.venv-retarget/bin/python tools/check_pinch.py            # 오른손
+.venv-retarget/bin/python tools/check_pinch.py --hand left
+```
+
+로봇을 여러 자세로 세워 그 손의 손끝·마디 위치를 읽고, 작업자 크기로 줄여서 다시 리타게팅에 넣습니다. 나온 관절각이 손끝을 원래 자리로 되돌려 놓으면 통과입니다.
+데이터도 로봇도 필요 없고, 쓰는 손은 로봇 자신의 손이라 좌우도 자동으로 맞습니다.
+
+```
+           pose   asked for   robot did    error   surfaces
+          pinch      8.7 mm     18.4 mm   +9.7 mm    -0.8 mm
+      open hand    166.8 mm    164.6 mm   -2.2 mm  +145.4 mm
+```
+
+`surfaces` 가 0 근처면 핀치가 실제로 닿습니다. 손끝 위치나 좌표계를 건드렸다면 이것부터 돌려 보세요.
+
 ### 압력센서 화면 (v3)
 
 V6의 18개 압력센서(손가락마다 3개, 손바닥 3개)를 V6 손바닥 렌더 위에 표시합니다. 원익 `allegro_hand_sensor_visualizer`(손가락 4개 손용)를 참고해 검은 배경, 손 이미지, 원익 로고로 구성했습니다.
@@ -183,13 +196,11 @@ v1(`retargeting_node.py`)은 MediaPipe 뼈대 각도를 게인·보간표로 관
 화면에서는 핀칭 자세가 나와도 실물에서는 집히지 않고, **엄지가 안쪽으로 덜
 굽혀집니다**(엄지 `joint01`이 −0.65 rad에서 막힘, 핀치에 필요한 값은 −1.0 rad).
 
-v2는 MANUS 텔레옵 프로젝트(`~/v6f_manuse_teleoperation/V6_Teleoperation`)의
-DexPilot 리타게팅을 그대로 가져다 씁니다. 매 프레임 최적화로 로봇 지문을 작업자
-지문 위치에 맞춥니다. 참조하는 URDF는 이 저장소의 `urdf/allegro_hand_v6_right.urdf`와
-바이트 단위로 동일합니다 — URDF가 틀린 게 아니라 v1 매핑이 그 범위를 안 쓰고
-있었습니다.
+v2는 DexPilot 최적화로 매 프레임 로봇 손끝을 작업자 손끝 위치에 맞춥니다
+(`retarget/`). 쓰는 URDF는 이 저장소의 `urdf/allegro_hand_v6_right.urdf` 그대로입니다 —
+URDF가 틀린 게 아니라 v1 매핑이 그 범위를 안 쓰고 있었습니다.
 
-작업자 지문이 2.2 mm까지 붙은 프레임에서 로봇 지문 사이 거리 (`tools/check_pinch_v2.py`):
+작업자 손끝이 2.2 mm까지 붙은 프레임에서 로봇 손끝 사이 거리:
 
 | | v1 (기하 매핑) | v2 (DexPilot) |
 |---|---|---|
@@ -245,12 +256,16 @@ flowchart LR
 | `config/teleop.env` | 이 PC의 기본값 (워크스페이스·IP·인터페이스·기본 옵션) |
 | `teleop_cockpit.py` | 콕핏 UI (카메라 + MediaPipe + OpenGL 3D 뷰) |
 | `teleop_dashboard.py` | 대시보드 UI (RViz2와 함께 사용) |
-| `retargeting_node.py` | 랜드마크 → 20관절 목표각 (왼손/오른손 별도 파이프라인) |
+| `retargeting_node.py` | v1: 랜드마크 → 20관절 목표각 (기하학적 매핑) |
+| `retargeting_node_v2.py`, `_v3.py` | v2/v3: DexPilot 리타게팅 노드 (v3는 입력 평활화·끊김 초기화 추가) |
+| `retarget/` | 리타게팅 본체. `model.py` 가 공개 `dex_retargeting` 위에 이 손을 올리고, `v6.yaml` 이 측정값을 담는다 |
+| `dexpilot_retarget.py` | 노드와 `retarget/` 사이: 좌우 반전 보정, 손 크기 측정, 좌우 판별 |
+| `tools/measure_fingertips.py` | 메쉬에서 손끝 위치와 접촉 거리를 측정해 `retarget/v6.yaml` 값을 만든다 |
 | `sim_bridge_node.py` | 100 Hz 명령 송출, EMA 필터, URDF ↔ 모터 좌표 변환 |
 | `vision_tracker.py` | 헤드리스/단순 GUI 모드의 MediaPipe 노드 |
 | `dataset_recorder.py` | 에피소드 녹화 |
 | `safety_utils.py` | 관절 순서·한계 정의 |
-| `tools/setup.sh` | 설치 스크립트 |
+| `tools/setup.sh` | 설치 스크립트 (`.venv` 와 `.venv-retarget` 둘 다 만듦) |
 | `tools/check_hand.py`, `check_hand.sh` | 로봇 통신 진단 (표준 라이브러리만 사용) |
 | `tools/detect_camera.py` | 카메라 자동 선택 (RealSense 우선, 흑백 전용 IR 노드 제외) |
 | `urdf/` | `allegro_hand_v6_{left,right}.urdf` 사본 (드라이버 패키지와 동일) |
@@ -263,7 +278,7 @@ flowchart LR
 - **조종 손**: 로봇 왼손은 작업자 왼손으로, 오른손은 오른손으로 조종합니다. 반대 손을 쓰면 굽힘이 인식되지 않습니다.
 - **리타게팅**: 왼손/오른손 파이프라인은 거울 대칭입니다. 굽힘은 같은 값, 벌림은 부호 반대. 엄지는 손별로 따로 튜닝되어 있습니다.
 - **URDF 좌표계**: 모든 관절이 0 rad에서 손가락이 곧게 펴지고, 양수가 손바닥 쪽 굽힘입니다.
-- **왼손 MCP 모터 영점**: 왼손의 MCP 모터(`joint11/21/31/41`)는 손가락을 편 상태에서 **0을 읽습니다**(URDF 그대로). 보정이 필요 없어 기본값은 보정 없음입니다. 영점이 90° 틀어진 손을 만나면 `--left-mcp-offset -1.5708` 로 켜고, 변환은 `sim_bridge_node.py` 한 곳에서만 합니다. 확인 방법: 텔레옵을 끄고 손가락을 편 상태에서 `./tools/check_hand.py 100` 의 값을 읽으면 그 값이 곧 오프셋입니다. (2026-10-08 실측: 힘을 푼 왼손이 joint11 = +1.42 rad 로 굽힘이 양수. 9월에는 −π/2 였는데 그 뒤 영점을 다시 잡은 것으로 보입니다.)
+- **왼손 MCP 모터 영점**: 왼손의 MCP 모터(`joint11/21/31/41`)는 손가락을 편 상태에서 **0을 읽습니다**(URDF 그대로). 보정이 필요 없어 기본값은 보정 없음입니다. 영점이 90° 틀어진 손을 만나면 `--left-mcp-offset -1.5708` 로 켜고, 변환은 `sim_bridge_node.py` 한 곳에서만 합니다. 확인 방법: 텔레옵을 끄고 손가락을 편 상태에서 `./tools/check_hand.py <왼손 주소 끝자리>` 의 값을 읽으면 그 값이 곧 오프셋입니다. (2026-10-08 실측: 힘을 푼 왼손이 joint11 = +1.42 rad 로 굽힘이 양수. 9월에는 −π/2 였는데 그 뒤 영점을 다시 잡은 것으로 보입니다.)
 
 | 경로 | 변환 (real + 왼손, joint11/21/31/41) |
 |---|---|
@@ -380,7 +395,7 @@ RViz2의 기본 Orbit 카메라입니다. 조작 전에 RViz2 창을 한 번 클
 
 - `rviz` 인자가 실제로 RViz2를 켜고 끕니다 (콕핏은 자체 3D 뷰가 있어서 필요 없음).
 - `joint_states_topic`으로 `robot_state_publisher`가 `/allegro/joint_states_urdf`를 읽게 합니다. 왼손 MCP 영점 보정을 켠 경우 이 토픽이 그 보정을 되돌려 줍니다.
-- 촉각 릴레이 / 대시보드 / 포즈 GUI 노드는 띄우지 않습니다 (MANUS 데모용).
+- 촉각 릴레이 / 대시보드 / 포즈 GUI 노드는 띄우지 않습니다 (원본 데모용).
 - 컨트롤러 spawner 타임아웃을 60초로 늘렸습니다. Modbus 하드웨어 초기화가 ~9초 걸려서 기본 10초로는 콜드 스타트 때 `joint_state_broadcaster`가 실패합니다.
 - `world → base_link` 정적 변환이 항등입니다. Wonik 브링업은 `pitch = -π/2`를 써서 손가락이 눕고 엄지만 위를 향하는데, `base_link`에서 +Z가 손가락 방향이라 항등 회전이어야 RViz에서 손이 선 자세로 보입니다.
 

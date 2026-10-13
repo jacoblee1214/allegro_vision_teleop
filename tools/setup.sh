@@ -5,7 +5,8 @@
 # What it does:
 #   1. apt: ROS 2 Jazzy packages the teleop nodes and the bring-up launch file need.
 #   2. .venv (--system-site-packages): mediapipe / PyOpenGL / opencv-contrib from pip,
-#      while rclpy, cv_bridge and PyQt5 keep coming from apt.
+#      while rclpy, cv_bridge and PyQt5 keep coming from apt. Then .venv-retarget,
+#      which holds dex_retargeting: it wants numpy 2.x and mediapipe wants 1.x.
 #   3. meshes/ symlink to the driver package STL meshes, so the cockpit 3D view also
 #      works when $ALLEGRO_WS is not sourced.
 #   4. Verifies that the Wonik driver packages are built and findable.
@@ -69,6 +70,16 @@ if [ "$DO_VENV" = true ]; then
     fi
     ./.venv/bin/pip install --upgrade pip
     ./.venv/bin/pip install -r requirements.txt
+
+    # The retargeting runs in its own environment: dex_retargeting and the pinocchio
+    # wheels it pulls in are built against numpy 2.x, mediapipe needs 1.x.
+    echo "      .venv-retarget (dex_retargeting, numpy 2.x)..."
+    if [ ! -x .venv-retarget/bin/python ]; then
+        /usr/bin/python3 -m venv --system-site-packages .venv-retarget
+    fi
+    ./.venv-retarget/bin/pip install --upgrade pip
+    ./.venv-retarget/bin/pip install -r requirements-retarget.txt \
+        --extra-index-url https://download.pytorch.org/whl/cpu
 else
     echo "[2/4] venv step skipped."
 fi

@@ -30,9 +30,9 @@
 | 이 저장소 | `~/allegro_vision_teleop` (예전 `~/humble_ws/allegro_vision_teleop` 은 바로가기) |
 | 원익 드라이버 작업공간 | `~/v6f_manuse_teleoperation` (빌드됨) |
 | 드라이버 **원본** 소스 | `~/hands` (원익 공식 배포, 2026-10-02) |
-| MANUS 텔레옵 프로젝트 | `~/V6_Teleoperation` (DexPilot 리타게팅 코어를 **복사하지 않고 그 경로에서 읽습니다**) |
+| 리타게팅 | 저장소 안 `retarget/` + 공개 `dex_retargeting`(MIT). 따로 받을 것 없음 |
 | 저장소 가상환경 | `~/allegro_vision_teleop/.venv` (mediapipe, numpy 1.26) |
-| 리타게팅 가상환경 | `~/V6_Teleoperation/.venv` (dex_retargeting, numpy 2.x) |
+| 리타게팅 가상환경 | `~/allegro_vision_teleop/.venv-retarget` (dex_retargeting, numpy 2.x) |
 
 가상환경이 둘인 이유는 numpy 버전이 충돌해서입니다. mediapipe는 1.x, dex_retargeting은 2.x를 씁니다. 리타게팅만 별도 프로세스로 돕니다.
 
@@ -46,7 +46,7 @@
    env -u VIRTUAL_ENV -u CONDA_PREFIX PATH=$(echo $PATH | tr ':' '\n' | grep -v miniforge | paste -sd:) \
      bash -c 'source /opt/ros/jazzy/setup.bash && colcon build --symlink-install --base-paths src'
    ```
-2. **`--base-paths src`**: 작업공간 안에 `V6_Teleoperation` 바로가기가 있어서, 이게 없으면 colcon이 그 안의 URDF 패키지까지 빌드하려다 실패합니다.
+2. **`--base-paths src`**: `src` 밖에 다른 ROS 패키지가 섞여 있으면 이 옵션 없이는 colcon이 그것까지 빌드하려다 실패합니다.
 3. **빠진 파일**: 드라이버 소스에 빈 `allegro_hand_v6_description/usd/` 폴더가 없으면 설치 단계에서 죽습니다. `mkdir` 로 만드세요.
 
 평소에는 다시 빌드할 일이 없습니다. 드라이버 소스를 바꿀 때만 합니다.
@@ -146,7 +146,7 @@ PC와 두 손은 같은 서브넷에 둡니다. 주소와 인터페이스는 `co
    - 확인: `ros2 control list_controllers` 가 양쪽에서 각각 보이고, 두 손이 동시에 `/joint_states` 를 낸다.
 2. **비전**: 지금 `max_num_hands=1` 입니다(`teleop_dashboard_v3.py`). 2로 올리고 MediaPipe의 handedness로 좌우를 갈라 토픽을 나눕니다. 화면 미러링 때문에 좌우가 뒤집혀 들어오는 점에 주의하세요(`--no-mirror` 참고).
    - 확인: 두 손을 들었을 때 좌우 토픽이 각각 나오고, 한 손만 들면 그쪽만 나온다.
-3. **리타게팅 2개**: DexPilot 모델을 손별로 하나씩. 한 프레임 2 ms 수준이라 부하는 문제없습니다. 왼손 설정은 `~/V6_Teleoperation/.../v6f_left_dexpilot.yml` 을 씁니다.
+3. **리타게팅 2개**: `retarget/` 의 모델을 손별로 하나씩. 한 프레임 3 ms 수준이라 부하는 문제없습니다.
 4. **브리지 2개**: `--hand` 와 토픽만 나누면 됩니다. MCP 영점 보정은 왼손에만 들어갑니다(4.3).
 5. **RViz**: 로봇 두 대를 한 장면에 올리려면 링크·프레임 이름을 손별로 접두사로 나눠야 합니다. `urdf/allegro_hand.urdf.xacro` 가 이미 손 모델을 저장소에서 읽으므로 여기에 접두사를 붙이면 됩니다.
 6. **대시보드**: 압력 패널 2개, 손 표시 2개, 카메라 화면 하나에 두 손.
@@ -189,6 +189,6 @@ PC와 두 손은 같은 서브넷에 둡니다. 주소와 인터페이스는 `co
 ## 9. 주의
 
 - **드라이버 패키지는 수정하지 않습니다.** 차이는 `launch/` 와 `urdf/` 에서 흡수합니다. 4.2의 왼손 URDF가 유일한 예외이고 이유를 파일에 적어 뒀습니다.
-- `~/V6_Teleoperation` 은 동료의 MANUS 글러브 텔레옵 프로젝트입니다. 리타게팅 코어를 그 경로에서 읽기만 하고 **수정하지 않습니다.** 그 폴더가 없으면 v2/v3가 돌지 않습니다.
+- 리타게팅은 `retarget/` 에 있고 공개 `dex_retargeting`(MIT) 위에 올라갑니다. 손끝 위치와 접촉 거리는 `tools/measure_fingertips.py` 가 이 저장소 메쉬에서 측정한 값입니다. 건드렸으면 `tools/check_pinch.py` 로 핀치가 닫히는지 확인하세요.
 - 실물에서 손가락이 명령을 안 따라가면 effort를 보세요. 네 관절이 똑같은 값으로 포화돼 있으면 한계에 밀어붙이는 중입니다(4.3이 그 사례).
 - 원익 로고(`assets/wonik_logo.png`)는 상표라 git에 올리지 않습니다. 로컬에만 둡니다.

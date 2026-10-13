@@ -1,0 +1,20 @@
+# Pip dependencies for the retargeting node's own environment (.venv-retarget).
+#
+# Separate from requirements.txt because of numpy: dex_retargeting and the pinocchio
+# wheels it pulls in are built against numpy 2.x, while mediapipe 0.10.x only works with
+# 1.x. The two cannot share one environment, so the retargeting runs in its own process
+# on this interpreter and talks to the rest over ROS topics.
+#
+# This environment does not need mediapipe, OpenCV or Qt. It needs rclpy, which comes
+# from the apt ROS 2 install through --system-site-packages.
+
+# The DexPilot optimizer. MIT, github.com/dexsuite/dex-retargeting.
+# Pulls in pinocchio (as `pin`), nlopt, anytree, lxml, pytransform3d.
+dex_retargeting==0.5.0
+
+# dex_retargeting needs torch but does not depend on it, so that the install can choose
+# between the CPU and CUDA builds. The retargeting is a 20-variable solve on the CPU;
+# the CUDA build would add gigabytes for nothing.
+torch>=2.0
+
+pyyaml

@@ -1,0 +1,74 @@
+# Allegro Hand V6 (5 fingers, 20 DOF) — what the retargeting needs to know about the hand.
+#
+# Everything here is measured from the hand's own URDF and meshes by
+# `tools/measure_fingertips.py`, so re-run that if the meshes change rather than editing
+# by hand. The optimizer itself is upstream `dex_retargeting` (MIT); this file and
+# retarget/model.py are only what it takes to point it at this hand.
+
+# ── Fingertips ──────────────────────────────────────────────────────────────
+# Where each fingertip is, in its distal link's own frame, and how round it is.
+#
+# The link's origin sits at the joint, 38 to 51 mm short of the end, so aiming the
+# optimizer there asks it to overlap two joints and the pinch never closes. These are the
+# centres of the fitted end caps -- inside the finger, as MediaPipe's own tip landmark is
+# inside the operator's.
+#
+# `pinch_distance` is the thumb's radius plus a finger's: the gap between two fingertip
+# centres when the surfaces touch. It is what the optimizer closes a pinch to, measured
+# rather than guessed.
+right:
+  tip_links:
+    thumb: Finger01_Link04
+    index: Finger02_Link04
+    middle: Finger03_Link04
+    ring: Finger04_Link04
+    pinky: Finger05_Link04
+  fingertips:
+    thumb: [-0.04968, -0.00074, -0.01255]     # 51.2 mm out, 9.6 mm radius
+    index: [-0.00090, -0.03614, +0.01290]     # 38.4 mm out, 9.5 mm radius
+    middle: [-0.03614, +0.00090, +0.01290]
+    ring: [-0.03614, +0.00090, +0.01290]
+    pinky: [-0.03615, +0.00043, +0.01290]
+  pinch_distance: 0.0192
+
+left:
+  tip_links:
+    thumb: Finger01_Link04
+    index: Finger02_Link04
+    middle: Finger03_Link04
+    ring: Finger04_Link04
+    pinky: Finger05_Link04
+  fingertips:
+    thumb: [+0.04967, -0.00128, -0.01255]
+    index: [+0.00090, +0.03613, -0.01290]
+    middle: [+0.03613, -0.00090, -0.01290]
+    ring: [-0.00090, -0.03613, -0.01290]
+    pinky: [-0.03353, -0.01350, -0.01290]
+  pinch_distance: 0.0192
+
+# ── Both hands ──────────────────────────────────────────────────────────────
+common:
+  base_link: base_link
+  #: The joints the optimizer solves for, in the order the controller expects them.
+  #: Checked against safety_utils.CONTROLLER_JOINT_ORDER at load.
+  joint_order:
+    [joint00, joint01, joint02, joint03,
+     joint10, joint11, joint12, joint13,
+     joint20, joint21, joint22, joint23,
+     joint30, joint31, joint32, joint33,
+     joint40, joint41, joint42, joint43]
+
+  #: How many times longer the robot's fingers are than the operator's, knuckle to
+  #: fingertip. Measured per operator from the first frames unless `--scaling` pins it;
+  #: this is the starting value and what a failed measurement falls back to.
+  scaling: 1.6
+
+  #: Closer than `project_dist` between the operator's own fingertips and the robot is
+  #: driven to a pinch; it is released again past `escape_dist`. Reproducing an object's
+  #: width rather than pinching wants a smaller `project_dist` (--project-dist 0.012).
+  project_dist: 0.03
+  escape_dist: 0.05
+
+  #: EMA on the solved joints, one step per vision frame, so the lag is (1 - a) / a
+  #: frames: 100 ms at a 30 Hz camera. The launcher's --alpha overrides it.
+  low_pass_alpha: 0.25

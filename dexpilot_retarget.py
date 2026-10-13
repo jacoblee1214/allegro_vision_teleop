@@ -70,14 +70,10 @@ from typing import Iterable, Optional
 
 import numpy as np
 
-# The MANUS teleop checkout that owns the retargeting core, the V6 Force URDF and
-# the tuned DexPilot configs. Override with V6F_TELEOP_ROOT.
-DEFAULT_V6F_ROOT = Path(
-    os.environ.get("V6F_TELEOP_ROOT", Path.home() / "v6f_manuse_teleoperation" / "V6_Teleoperation")
-).expanduser()
+REPO = Path(__file__).resolve().parent
 
 #: Landmark layout MediaPipe Hands emits, which is already the MANO 21-point
-#: order DexPilot and `v6f_teleop.hand.mano` expect. No relabelling needed.
+#: order DexPilot expects. No relabelling needed.
 N_LANDMARKS = 21
 
 #: Fingertip / knuckle pairs used for the chirality check (see `chirality_score`).
@@ -89,65 +85,53 @@ class DexPilotUnavailable(RuntimeError):
     """Raised when the retargeting core cannot be imported by this interpreter."""
 
 
-def v6f_src_path(root: Path | str | None = None) -> Path:
-    root = Path(root).expanduser() if root else DEFAULT_V6F_ROOT
-    return root / "src"
-
-
 def config_path(hand_side: str, root: Path | str | None = None) -> Path:
-    """The tuned DexPilot config for one side, inside the MANUS checkout."""
+    """The hand's measurements and tuning. One file, both sides."""
     side = hand_side.lower()
     if side not in ("left", "right"):
         raise ValueError(f"hand_side must be 'left' or 'right', got {hand_side!r}")
-    return v6f_src_path(root) / "v6f_teleop" / "configs" / f"v6f_{side}_dexpilot.yml"
+    return Path(root or REPO) / "retarget" / "v6.yaml"
 
 
 def _import_core(root: Path | str | None = None):
-    """Import the MANUS retargeting core, with an error that says what to do."""
-    src = v6f_src_path(root)
-    if not src.is_dir():
-        raise DexPilotUnavailable(
-            f"the MANUS teleop checkout is not at {src.parent}. Point V6F_TELEOP_ROOT "
-            f"at it (the directory holding src/v6f_teleop and urdf/v6_force)."
-        )
-    if str(src) not in sys.path:
-        sys.path.insert(0, str(src))
+    """Import the retargeting core, with an error that says what to do."""
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
     try:
-        from v6f_teleop.hand.mano import to_geort_canonical
-        from v6f_teleop.retarget.builder import RetargetingSpec
-        from v6f_teleop.retarget.dexpilot import DexPilotModel
+        from retarget import HandSpec, V6DexPilot, to_canonical
     except ImportError as exc:                                  # noqa: PERF203
-        venv = src.parent / ".venv" / "bin" / "python"
+        venv = REPO / ".venv-retarget" / "bin" / "python"
         raise DexPilotUnavailable(
             f"{exc}.\n"
-            f"DexPilot needs dex_retargeting + pinocchio, which live in the MANUS "
-            f"project's venv, not this repo's (mediapipe pins numpy 1.x there and "
-            f"pinocchio is built against numpy 2.x -- they cannot share one).\n"
-            f"Run this node with:  {venv}\n"
-            f"run_teleop_v2.sh does that for you."
+            f"The retargeting needs dex_retargeting and pinocchio, which want numpy 2.x, "
+            f"while mediapipe pins numpy 1.x -- they cannot share one environment, so "
+            f"this node runs in its own.\n"
+            f"Run it with:  {venv}\n"
+            f"./tools/setup.sh creates that environment; run_teleop_v3.sh uses it."
         ) from exc
-    return DexPilotModel, RetargetingSpec, to_geort_canonical
+    return V6DexPilot, HandSpec, to_canonical
 
 
 def chirality_score(canonical: np.ndarray) -> float:
     """Positive for a right hand in the canonical frame, negative for a left one.
 
-    The canonical x axis is the palm normal, built by a cross product, so
-    mirroring a hand negates it (`v6f_teleop.hand.mano.canonical_axes`). Curled
-    fingertips move to the palmar side, so "are the tips on the +x side of their
-    knuckles" reads the chirality off any pose with some flexion in it. Measured
-    over `human_99test4_right.npy` (a right hand): mean +0.024, positive on 76%
-    of frames -- which is why this only warns, and only on a long average.
+    The canonical frame is the robot's: x from the little finger towards the index, z
+    along the fingers, y out of the back of the hand. The two hands differ in where the
+    thumb sits -- in front of the palm on one side and behind it on the other -- so the
+    thumb's y against the other knuckles' says which hand this is, whatever the fingers
+    are doing. Measured over a recorded right hand: mean +0.040, positive on every frame.
     """
-    return float(np.mean(canonical[_TIPS, 0] - canonical[_MCPS, 0]))
+    pts = np.asarray(canonical, dtype=np.float64).reshape(N_LANDMARKS, 3)
+    palm = float(np.mean(pts[list(_MCPS), 1]))
+    return float(palm - np.mean(pts[[2, 3, 4], 1]))
 
 
 class VisionDexPilotRetargeter:
-    """MediaPipe 21 keypoints -> 20 joint angles, via the MANUS DexPilot solver.
+    """MediaPipe 21 keypoints -> 20 joint angles, via the DexPilot solver.
 
     Args:
         hand_side: which robot hand, and so which config/URDF. Switchable live.
-        root: the MANUS checkout. Defaults to `$V6F_TELEOP_ROOT`.
+        root: where retarget/v6.yaml lives. Defaults to this repository.
         scaling: fixed operator/robot finger-length ratio. `None` measures it
             from the first `calibrate_frames` frames, which is what the
             normalised-landmark path needs (its unit is arbitrary) and what the
@@ -174,8 +158,8 @@ class VisionDexPilotRetargeter:
         aspect: float = 480.0 / 640.0,
         low_pass_alpha: Optional[float] = None,
     ) -> None:
-        self._DexPilotModel, self._Spec, self._to_canonical = _import_core(root)
-        self.root = Path(root).expanduser() if root else DEFAULT_V6F_ROOT
+        self._Model, self._Spec, self._to_canonical = _import_core(root)
+        self.root = Path(root).expanduser() if root else REPO
         self.scaling = scaling
         self.calibrate_frames = max(0, int(calibrate_frames))
         self.undo_mirror = bool(undo_mirror)
@@ -203,15 +187,14 @@ class VisionDexPilotRetargeter:
         if side not in self._models:
             cfg = config_path(side, self.root)
             if not cfg.is_file():
-                raise DexPilotUnavailable(f"no DexPilot config at {cfg}")
-            # Build the spec first so `low_pass_alpha` is in place before the
-            # solver is assembled: SeqRetargeting takes an LPFilter built from
-            # it, and changing the number afterwards would need the whole thing
-            # rebuilt (~2 s).
-            spec = self._Spec.from_yaml(cfg)
+                raise DexPilotUnavailable(f"no hand measurements at {cfg}")
+            # The filter has to be in place before the solver is assembled, because
+            # SeqRetargeting takes it at construction; changing it afterwards would mean
+            # rebuilding the whole thing.
+            spec = self._Spec.load(side, config=cfg)
             if self.low_pass_alpha is not None:
                 spec.low_pass_alpha = float(self.low_pass_alpha)
-            model = self._DexPilotModel(spec)
+            model = self._Model(spec)
             if self._effective_scaling is not None:
                 model.set_scaling(float(self._effective_scaling))
             self._models[side] = model

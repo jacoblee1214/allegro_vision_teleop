@@ -10,6 +10,7 @@ log/
 # Environments
 .env
 .venv/
+.venv-retarget/
 env/
 venv/
 
