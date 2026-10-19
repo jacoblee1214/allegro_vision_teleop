@@ -54,10 +54,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from dexpilot_retarget import DexPilotUnavailable, VisionDexPilotRetargeter, config_path
 from safety_utils import CONTROLLER_JOINT_ORDER, N_JOINTS, get_joint_limits
 
-WORLD_TOPIC = "/allegro/vision/world_landmarks"
-INPUT_TOPIC = "/allegro/vision/landmarks"
-STATE_TOPIC = "/allegro/teleop_state"
-OUTPUT_TOPIC = "/allegro/target_joints"
+# Relative names: /allegro/... as before, /left/allegro/... under `--ros-args -r __ns:=/left`.
+WORLD_TOPIC = "allegro/vision/world_landmarks"
+INPUT_TOPIC = "allegro/vision/landmarks"
+STATE_TOPIC = "allegro/teleop_state"
+OUTPUT_TOPIC = "allegro/target_joints"
 
 #: How long a world-landmark frame keeps the normalised topic locked out. Long
 #: enough to ride out a few dropped detections, short enough that killing a v2
@@ -319,7 +320,8 @@ def main() -> None:
                    help="EMA on the landmarks after the median (0 = off; lower = smoother and slower)")
     p.add_argument("--reset-gap", type=float, default=0.3,
                    help="drop DexPilot's warm start after this many seconds without a hand")
-    args = p.parse_args()
+    # --ros-args (namespace, remaps) belong to rclpy, which reads them from sys.argv itself.
+    args = p.parse_args(rclpy.utilities.remove_ros_args(sys.argv)[1:])
 
     if args.scaling is None and args.calibrate == 0:
         args.scaling = None     # keep the config's fixed value, measure nothing

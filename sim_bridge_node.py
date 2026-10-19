@@ -39,11 +39,13 @@ from std_msgs.msg import Float64MultiArray, String
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from safety_utils import CONTROLLER_JOINT_ORDER, JOINT_LIMITS, N_JOINTS
 
-INPUT_TOPIC = "/allegro/target_joints"
-OUTPUT_TOPIC = "/allegro_hand_position_controller/commands"
-STATE_TOPIC = "/allegro/teleop_state"  # same topic the cockpit/dashboard/retargeting use
-JOINT_STATES_TOPIC = "/joint_states"
-JOINT_STATES_URDF_TOPIC = "/allegro/joint_states_urdf"
+# Relative names: they resolve to /allegro/... as before, and to /left/allegro/... when the
+# node runs with `--ros-args -r __ns:=/left`, so one copy per hand needs no other change.
+INPUT_TOPIC = "allegro/target_joints"
+OUTPUT_TOPIC = "allegro_hand_position_controller/commands"
+STATE_TOPIC = "allegro/teleop_state"  # same topic the cockpit/dashboard/retargeting use
+JOINT_STATES_TOPIC = "joint_states"
+JOINT_STATES_URDF_TOPIC = "allegro/joint_states_urdf"
 DEFAULT_ALPHA = 0.25
 DEFAULT_RATE = 100.0  # Hz (matches controller_manager 100Hz update_rate)
 
@@ -265,7 +267,8 @@ def main() -> None:
     parser.add_argument("--left-mcp-offset", type=float, default=DEFAULT_LEFT_MCP_OFFSET,
                         help="Radians a left hand's MCP motors read with the fingers straight, if not 0 "
                              "(e.g. -1.5708 on a hand zeroed 90 degrees away). Real mode, left hand only.")
-    args = parser.parse_args()
+    # --ros-args (namespace, remaps) belong to rclpy, which reads them from sys.argv itself.
+    args = parser.parse_args(rclpy.utilities.remove_ros_args(sys.argv)[1:])
 
     rclpy.init()
     node = SimBridgeNode(

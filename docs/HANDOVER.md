@@ -131,7 +131,7 @@ PC와 두 손은 같은 서브넷에 둡니다. 주소와 인터페이스는 `co
 | 압력 패널 | 오른손 실측 배치, 왼손은 반전 추정 |
 | 시뮬레이션 (로봇 없이) | 양손 확인됨 |
 | 데이터 기록 (`dataset_recorder.py`) | 코드는 있으나 이번에 확인 안 함 |
-| **양손 동시** | **안 됨** — 6장 |
+| **양손 동시** | 시뮬레이션 확인됨(2026-10-19, [bimanual_allegro](https://github.com/jacoblee1214/bimanual_allegro) `docs/02_bimanual_hand_sim.md`). **실물은 안 됨** — 6장 |
 | 실행 중 손 바꾸기 (**H**) | 실물에서 비활성 |
 
 **H가 실물에서 안 되는 건 의도된 것입니다.** 드라이버가 시작할 때 한쪽 손 IP로 Modbus 연결을 하나 잡고, 손은 연결을 하나만 받습니다. 실행 중에 바꾸려면 드라이버·리타게팅·RViz를 모두 내렸다 다시 띄워야 합니다. 지금은 켤 때 `--hand` 로 고릅니다.
@@ -141,6 +141,8 @@ PC와 두 손은 같은 서브넷에 둡니다. 주소와 인터페이스는 `co
 ## 6. 양손 모드 — 아직 안 한 일
 
 전 계층을 건드려야 해서 작은 추가가 아닙니다. 순서대로 하고 각 단계마다 확인하는 걸 권합니다.
+
+> **2026-10-19 진행 상황.** 1, 3, 4, 5번은 시뮬레이션에서 끝났습니다. 브링업 launch 에 `namespace`, `frame_prefix`, `world_tf` 인자가 생겼고, `retargeting_node_v3.py` 와 `sim_bridge_node.py` 는 상대 토픽 이름과 `--ros-args -r __ns:=/left` 를 받습니다. 관절 이름은 `ah_prefix` 대신 네임스페이스로 가릅니다(손마다 `controller_manager` 가 따로라 충돌하지 않고, 겹치는 TF 만 `frame_prefix` 로 나눕니다). 2번 비전과 양손 실행 launch 는 bimanual_allegro 저장소에 있습니다. 네임스페이스를 주지 않으면 모든 토픽 이름이 예전과 같습니다. 6번 대시보드와 실물 두 손 연결은 남았습니다.
 
 1. **드라이버 2개**: 원익 패키지에 양손 설정이 없습니다(`config/single_hand` 만). 네임스페이스를 `/left`, `/right` 로 나눠 `controller_manager` 를 두 벌 띄우고 IP를 각각 줍니다. 관절 이름 충돌은 xacro의 `ah_prefix` 로 풉니다. 컨트롤러 yaml도 손별로 필요합니다.
    - 확인: `ros2 control list_controllers` 가 양쪽에서 각각 보이고, 두 손이 동시에 `/joint_states` 를 낸다.
